@@ -149,7 +149,7 @@ DOH_PROVIDERS = {
 TARGET_PORTS = [443, 80]
 
 # DPI bypass parameters
-FAKE_TTL = 5
+FAKE_TTL = 6
 
 # Logging
 VERBOSE = False

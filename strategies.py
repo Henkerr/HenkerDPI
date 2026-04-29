@@ -5,11 +5,10 @@ General-purpose — all sites or selected domains.
 """
 
 import struct
-import socket
 import pydivert
 from config import get_all_domains, load_settings, MODE_ALL
 
-FAKE_TTL = 5  # Reaches DPI but expires before reaching the server
+FAKE_TTL = 6  # Exact V1 value — proven to work
 
 # Local/private IP ranges that should never be bypassed
 _SKIP_PREFIXES = (
