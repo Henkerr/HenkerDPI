@@ -1,6 +1,6 @@
 """
 HenkerDPI V2 - Modern GUI
-Yeni özellikler: Mode seçici (All/Selective), kategori toggle, DoH switch
+Features: Mode selector (All/Selective), category toggles, DoH switch, 5 themes
 """
 
 import customtkinter as ctk
@@ -44,7 +44,12 @@ FONT = "Helvetica"
 GREEN = "#4ade80"
 RED = "#f87171"
 
-# 5 tema
+# Hide console windows for subprocess calls
+_SW = subprocess.STARTUPINFO()
+_SW.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+_SW.wShowWindow = 0  # SW_HIDE
+
+# 5 themes
 THEMES = {
     "phantom": {
         "name": "Phantom",
@@ -129,7 +134,7 @@ def _lerp_color(c1, c2, t):
 
 
 def _make_power_button(size, active, hover=0.0, theme_key="phantom"):
-    """Power button — temalı glow animasyonu."""
+    """Power button with themed glow animation."""
     th = THEMES[theme_key]
     s = size * 3
     img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
@@ -1079,7 +1084,7 @@ class HenkerDPIApp(ctk.CTk):
     def _check_autostart(self):
         try:
             r = subprocess.run(["schtasks", "/query", "/tn", SERVICE_NAME],
-                               capture_output=True, text=True)
+                               capture_output=True, text=True, startupinfo=_SW)
             if r.returncode == 0:
                 self._auto_var.set(True)
         except Exception:
@@ -1092,14 +1097,14 @@ class HenkerDPIApp(ctk.CTk):
                 "schtasks", "/create", "/tn", SERVICE_NAME,
                 "/tr", f'"{PYTHON_PATH}" "{script}"',
                 "/sc", "onlogon", "/rl", "highest", "/f"
-            ], capture_output=True, text=True)
+            ], capture_output=True, text=True, startupinfo=_SW)
             if r.returncode == 0:
                 self._log_queue.put(t("autostart_added", self._lang))
             else:
                 self._auto_var.set(False)
         else:
             subprocess.run(["schtasks", "/delete", "/tn", SERVICE_NAME, "/f"],
-                           capture_output=True)
+                           capture_output=True, startupinfo=_SW)
             self._log_queue.put(t("autostart_removed", self._lang))
 
     # === Tray ===

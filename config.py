@@ -1,13 +1,13 @@
 """
 HenkerDPI V2 - Configuration
-Genel amaçlı DPI bypass. Tüm siteler veya kategori bazlı.
+General-purpose DPI bypass. All sites or category-based filtering.
 """
 
 import json
 import os
 import sys
 
-# PyInstaller onefile: exe'nin yanına yaz
+# PyInstaller onefile: write next to the exe, not in temp dir
 if getattr(sys, 'frozen', False):
     _APP_DIR = os.path.dirname(sys.executable)
 else:
@@ -16,17 +16,17 @@ else:
 SETTINGS_FILE = os.path.join(_APP_DIR, "settings.json")
 CUSTOM_DOMAINS_FILE = os.path.join(_APP_DIR, "custom_domains.json")
 
-# === Bypass Modları ===
-# "all"        — Tüm HTTPS trafiğini bypass et (Warp gibi)
-# "selective"  — Sadece seçili kategoriler + custom domainler
+# === Bypass Modes ===
+# "all"        — Bypass all HTTPS traffic (like Warp/VPN)
+# "selective"  — Only bypass selected categories + custom domains
 MODE_ALL = "all"
 MODE_SELECTIVE = "selective"
 
-# === Preset Kategoriler ===
-# Türkiye'de engelli veya zaman zaman engellenen siteler
+# === Preset Categories ===
+# Commonly blocked or restricted websites by region
 CATEGORIES = {
     "social": {
-        "name": "Sosyal Medya",
+        "name": "Social Media",
         "icon": "social",
         "domains": [
             "twitter.com", "x.com", "abs.twimg.com", "pbs.twimg.com",
@@ -65,7 +65,7 @@ CATEGORIES = {
         ],
     },
     "wiki": {
-        "name": "Bilgi / Wiki",
+        "name": "Knowledge / Wiki",
         "icon": "wiki",
         "domains": [
             "wikipedia.org", "wikimedia.org", "wikidata.org",
@@ -77,7 +77,7 @@ CATEGORIES = {
         ],
     },
     "dev": {
-        "name": "Geliştirici",
+        "name": "Developer",
         "icon": "dev",
         "domains": [
             "github.com", "githubusercontent.com", "githubassets.com",
@@ -89,7 +89,7 @@ CATEGORIES = {
         ],
     },
     "media": {
-        "name": "Medya / Haber",
+        "name": "News / Media",
         "icon": "media",
         "domains": [
             "bbc.com", "bbc.co.uk",
@@ -114,7 +114,7 @@ CATEGORIES = {
         ],
     },
     "ai": {
-        "name": "AI Servisleri",
+        "name": "AI Services",
         "icon": "ai",
         "domains": [
             "openai.com", "chat.openai.com", "chatgpt.com",
@@ -148,8 +148,8 @@ DOH_PROVIDERS = {
 # Ports
 TARGET_PORTS = [443, 80]
 
-# DPI bypass parametreleri
-FAKE_TTL = 6
+# DPI bypass parameters
+FAKE_TTL = 3
 
 # Logging
 VERBOSE = False
@@ -201,7 +201,7 @@ def save_custom_domains(domains: list[str]):
 
 
 def get_category_domains(enabled_categories: list[str]) -> list[str]:
-    """Aktif kategorilerdeki tüm domainleri topla."""
+    """Collect all domains from enabled categories."""
     domains = []
     for cat_key in enabled_categories:
         if cat_key in CATEGORIES:
@@ -210,7 +210,7 @@ def get_category_domains(enabled_categories: list[str]) -> list[str]:
 
 
 def get_all_domains(settings: dict = None) -> list[str]:
-    """Mode'a göre domain listesi döndür."""
+    """Return domain list based on current mode."""
     if settings is None:
         settings = load_settings()
     cats = get_category_domains(settings.get("enabled_categories", []))

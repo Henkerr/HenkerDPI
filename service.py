@@ -12,9 +12,14 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_PATH = os.path.join(SCRIPT_DIR, "main.py")
 PID_FILE = os.path.join(SCRIPT_DIR, "henkerdpi_v2.pid")
 
+# Hide console windows for all subprocess calls
+_SW = subprocess.STARTUPINFO()
+_SW.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+_SW.wShowWindow = 0  # SW_HIDE
+
 
 def start():
-    """HenkerDPI V2'yi arka planda başlat."""
+    """Start HenkerDPI V2 in the background."""
     if _is_running():
         print("[!] HenkerDPI V2 is already running.")
         return
@@ -31,7 +36,7 @@ def start():
 
 
 def stop():
-    """Çalışan HenkerDPI V2 process'ini durdur."""
+    """Stop running HenkerDPI V2 process."""
     if not os.path.exists(PID_FILE):
         print("[-] HenkerDPI V2 is not running.")
         return
@@ -42,7 +47,7 @@ def stop():
     if pid.isdigit():
         result = subprocess.run(
             ["taskkill", "/f", "/pid", pid],
-            capture_output=True, text=True,
+            capture_output=True, text=True, startupinfo=_SW,
         )
         if result.returncode == 0:
             print(f"[-] HenkerDPI V2 stopped (PID: {pid})")
@@ -70,7 +75,7 @@ def restart():
 
 
 def install():
-    """Windows startup'a ekle."""
+    """Add to Windows startup via Task Scheduler."""
     cmd = [
         "schtasks", "/create",
         "/tn", SERVICE_NAME,
@@ -79,7 +84,7 @@ def install():
         "/rl", "highest",
         "/f",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, startupinfo=_SW)
     if result.returncode == 0:
         print("[+] Added to Windows startup!")
     else:
@@ -87,9 +92,10 @@ def install():
 
 
 def uninstall():
+    """Remove from Windows startup."""
     stop()
     cmd = ["schtasks", "/delete", "/tn", SERVICE_NAME, "/f"]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, startupinfo=_SW)
     if result.returncode == 0:
         print("[-] Removed from Windows startup.")
     else:
@@ -105,7 +111,7 @@ def _is_running():
         return False
     result = subprocess.run(
         ["tasklist", "/fi", f"PID eq {pid}"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, startupinfo=_SW,
     )
     return "python" in result.stdout.lower()
 

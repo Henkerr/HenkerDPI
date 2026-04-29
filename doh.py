@@ -1,12 +1,17 @@
 """
 HenkerDPI V2 - DNS-over-HTTPS (DoH)
-Sistem DNS'ini güvenli DNS sunucusuna yönlendir.
-ISP'nin DNS seviyesinde engellemesini bypass eder.
+Redirect system DNS to secure DNS servers.
+Bypasses ISP-level DNS blocking/hijacking.
 """
 
 import subprocess
 import ctypes
 import re
+
+# Hide console windows for all subprocess calls
+_SW = subprocess.STARTUPINFO()
+_SW.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+_SW.wShowWindow = 0  # SW_HIDE
 
 
 def is_admin() -> bool:
@@ -17,37 +22,56 @@ def is_admin() -> bool:
 
 
 def get_active_interfaces() -> list[str]:
-    """Aktif ağ arayüzlerinin isimlerini al."""
+    """Get names of active network interfaces."""
+    interfaces = []
+
+    # Method 1: PowerShell (most reliable, locale-independent)
+    try:
+        result = subprocess.run(
+            ["powershell", "-Command",
+             "Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | Select-Object -ExpandProperty Name"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", startupinfo=_SW,
+            timeout=5
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split("\n"):
+                name = line.strip()
+                if name:
+                    interfaces.append(name)
+            if interfaces:
+                return interfaces
+    except Exception:
+        pass
+
+    # Method 2: netsh fallback (locale-dependent but works as backup)
     try:
         result = subprocess.run(
             ["netsh", "interface", "show", "interface"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace"
+            capture_output=True, text=True, encoding="utf-8", errors="replace", startupinfo=_SW,
+            timeout=5
         )
-        interfaces = []
         for line in result.stdout.strip().split("\n"):
-            # "Connected" satırlarını bul
-            if "Connected" in line or "Bağlı" in line:
-                # Son sütun interface adı
+            lower = line.lower()
+            if "connected" in lower:
                 parts = line.strip().split()
                 if len(parts) >= 4:
-                    # Son kısım interface adı (boşluklu olabilir)
                     name = " ".join(parts[3:])
                     interfaces.append(name)
-        return interfaces
     except Exception:
-        return []
+        pass
+
+    return interfaces
 
 
 def get_current_dns(interface: str) -> list[str]:
-    """Bir interface'in mevcut DNS sunucularını al."""
+    """Get current DNS servers for an interface."""
     try:
         result = subprocess.run(
             ["netsh", "interface", "ip", "show", "dns", f"name={interface}"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace"
+            capture_output=True, text=True, encoding="utf-8", errors="replace", startupinfo=_SW
         )
         dns_list = []
         for line in result.stdout.split("\n"):
-            # IP adresi pattern'i
             match = re.search(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
             if match:
                 dns_list.append(match.group(1))
@@ -57,18 +81,16 @@ def get_current_dns(interface: str) -> list[str]:
 
 
 def set_dns(interface: str, primary: str, secondary: str = None) -> bool:
-    """Bir interface'in DNS sunucularını ayarla."""
+    """Set DNS servers for an interface."""
     try:
-        # Primary DNS
         result = subprocess.run(
             ["netsh", "interface", "ip", "set", "dns",
              f"name={interface}", "static", primary, "validate=no"],
-            capture_output=True, text=True
+            capture_output=True, text=True, startupinfo=_SW
         )
         if result.returncode != 0:
             return False
 
-        # Secondary DNS
         if secondary:
             subprocess.run(
                 ["netsh", "interface", "ip", "add", "dns",
@@ -81,12 +103,12 @@ def set_dns(interface: str, primary: str, secondary: str = None) -> bool:
 
 
 def set_dns_auto(interface: str) -> bool:
-    """DNS'i otomatik (DHCP) moduna geri al."""
+    """Reset DNS to automatic (DHCP) mode."""
     try:
         result = subprocess.run(
             ["netsh", "interface", "ip", "set", "dns",
              f"name={interface}", "dhcp"],
-            capture_output=True, text=True
+            capture_output=True, text=True, startupinfo=_SW
         )
         return result.returncode == 0
     except Exception:
@@ -94,9 +116,8 @@ def set_dns_auto(interface: str) -> bool:
 
 
 class DohManager:
-    """DNS-over-HTTPS yöneticisi. Sistem DNS'ini güvenli sunucuya yönlendirir."""
+    """DNS-over-HTTPS manager. Redirects system DNS to secure servers."""
 
-    # Bilinen DoH-destekli DNS sunucuları
     PROVIDERS = {
         "cloudflare": ("1.1.1.1", "1.0.0.1"),
         "google": ("8.8.8.8", "8.8.4.4"),
@@ -106,7 +127,7 @@ class DohManager:
     def __init__(self, provider: str = "cloudflare", log_callback=None):
         self._provider = provider
         self._log = log_callback or print
-        self._original_dns = {}  # interface → [dns_list] — geri dönüş için
+        self._original_dns = {}  # interface -> [dns_list] for rollback
         self._active = False
 
     @property
@@ -114,55 +135,53 @@ class DohManager:
         return self._active
 
     def start(self) -> bool:
-        """Tüm aktif interface'lerde DNS'i güvenli sunucuya çevir."""
+        """Set secure DNS on all active interfaces."""
         if self._provider not in self.PROVIDERS:
-            self._log(f"[!] Bilinmeyen DoH provider: {self._provider}")
+            self._log(f"[!] Unknown DoH provider: {self._provider}")
             return False
 
         primary, secondary = self.PROVIDERS[self._provider]
         interfaces = get_active_interfaces()
 
         if not interfaces:
-            self._log("[!] Aktif ağ arayüzü bulunamadı")
+            self._log("[!] No active network interfaces found")
             return False
 
         success = False
         for iface in interfaces:
-            # Mevcut DNS'i kaydet (geri dönüş için)
+            # Save current DNS for rollback
             current = get_current_dns(iface)
             self._original_dns[iface] = current
 
             if set_dns(iface, primary, secondary):
-                self._log(f"[DNS] {iface} → {primary}")
+                self._log(f"[DNS] {iface} -> {primary}")
                 success = True
             else:
-                self._log(f"[!] DNS ayarlanamadı: {iface}")
+                self._log(f"[!] Failed to set DNS: {iface}")
 
         if success:
             self._active = True
-            self._log(f"[DNS] {self._provider.title()} DNS aktif")
+            self._log(f"[DNS] {self._provider.title()} DNS active")
 
         return success
 
     def stop(self):
-        """DNS'i orijinal ayarlarına geri döndür."""
+        """Restore DNS to original settings."""
         for iface, original in self._original_dns.items():
             if original:
-                # Orijinal DNS'leri geri yükle
                 set_dns(iface, original[0],
                         original[1] if len(original) > 1 else None)
-                self._log(f"[DNS] {iface} → orijinal")
+                self._log(f"[DNS] {iface} -> original")
             else:
-                # DHCP'ye geri dön
                 set_dns_auto(iface)
-                self._log(f"[DNS] {iface} → DHCP")
+                self._log(f"[DNS] {iface} -> DHCP")
 
         self._original_dns.clear()
         self._active = False
-        self._log("[DNS] DNS orijinal ayarlara döndürüldü")
+        self._log("[DNS] DNS restored to original settings")
 
     def set_provider(self, provider: str):
-        """Provider değiştir. Aktifse yeniden başlat."""
+        """Change provider. Restarts if currently active."""
         was_active = self._active
         if was_active:
             self.stop()
