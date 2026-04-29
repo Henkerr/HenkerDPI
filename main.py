@@ -55,12 +55,10 @@ class BypassEngine:
             self._doh = DohManager(provider=provider, log_callback=self._log)
             self._doh.start()
 
-        # Kernel DROP: DPI-injected RST packets (only for new connections)
-        # tcp.Ack — catch RST packets after SYN-ACK (sent by DPI)
-        # tcp.PayloadLength == 0 — empty RST (DPI inject signature)
+        # Kernel DROP: DPI-injected RST packets
+        # Drop all inbound RST on 443/80 — DPI injects these to kill connections
         self._rst_drop = pydivert.WinDivert(
-            "inbound and tcp and tcp.Rst and tcp.Ack and "
-            "tcp.PayloadLength == 0 and "
+            "inbound and tcp and tcp.Rst and "
             "(tcp.SrcPort == 443 or tcp.SrcPort == 80)",
             priority=1000, flags=Flag.DROP
         )

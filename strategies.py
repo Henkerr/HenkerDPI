@@ -9,7 +9,7 @@ import socket
 import pydivert
 from config import get_all_domains, load_settings, MODE_ALL
 
-FAKE_TTL = 3  # Reaches DPI but expires before reaching the server (3 hops)
+FAKE_TTL = 5  # Reaches DPI but expires before reaching the server
 
 # Local/private IP ranges that should never be bypassed
 _SKIP_PREFIXES = (
