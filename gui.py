@@ -45,9 +45,7 @@ GREEN = "#4ade80"
 RED = "#f87171"
 
 # Hide console windows for subprocess calls
-_SW = subprocess.STARTUPINFO()
-_SW.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-_SW.wShowWindow = 0  # SW_HIDE
+_CF = subprocess.CREATE_NO_WINDOW
 
 # 5 themes
 THEMES = {
@@ -1084,7 +1082,7 @@ class HenkerDPIApp(ctk.CTk):
     def _check_autostart(self):
         try:
             r = subprocess.run(["schtasks", "/query", "/tn", SERVICE_NAME],
-                               capture_output=True, text=True, startupinfo=_SW)
+                               capture_output=True, text=True, creationflags=_CF)
             if r.returncode == 0:
                 self._auto_var.set(True)
         except Exception:
@@ -1097,14 +1095,14 @@ class HenkerDPIApp(ctk.CTk):
                 "schtasks", "/create", "/tn", SERVICE_NAME,
                 "/tr", f'"{PYTHON_PATH}" "{script}"',
                 "/sc", "onlogon", "/rl", "highest", "/f"
-            ], capture_output=True, text=True, startupinfo=_SW)
+            ], capture_output=True, text=True, creationflags=_CF)
             if r.returncode == 0:
                 self._log_queue.put(t("autostart_added", self._lang))
             else:
                 self._auto_var.set(False)
         else:
             subprocess.run(["schtasks", "/delete", "/tn", SERVICE_NAME, "/f"],
-                           capture_output=True, startupinfo=_SW)
+                           capture_output=True, creationflags=_CF)
             self._log_queue.put(t("autostart_removed", self._lang))
 
     # === Tray ===

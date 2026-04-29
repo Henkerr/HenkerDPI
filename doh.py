@@ -9,9 +9,7 @@ import ctypes
 import re
 
 # Hide console windows for all subprocess calls
-_SW = subprocess.STARTUPINFO()
-_SW.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-_SW.wShowWindow = 0  # SW_HIDE
+_CF = subprocess.CREATE_NO_WINDOW
 
 
 def is_admin() -> bool:
@@ -28,10 +26,10 @@ def get_active_interfaces() -> list[str]:
     # Method 1: PowerShell (most reliable, locale-independent)
     try:
         result = subprocess.run(
-            ["powershell", "-Command",
+            ["powershell", "-NoProfile", "-Command",
              "Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | Select-Object -ExpandProperty Name"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", startupinfo=_SW,
-            timeout=5
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            creationflags=_CF, timeout=5
         )
         if result.returncode == 0:
             for line in result.stdout.strip().split("\n"):
@@ -43,12 +41,12 @@ def get_active_interfaces() -> list[str]:
     except Exception:
         pass
 
-    # Method 2: netsh fallback (locale-dependent but works as backup)
+    # Method 2: netsh fallback
     try:
         result = subprocess.run(
             ["netsh", "interface", "show", "interface"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", startupinfo=_SW,
-            timeout=5
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            creationflags=_CF, timeout=5
         )
         for line in result.stdout.strip().split("\n"):
             lower = line.lower()
@@ -68,7 +66,8 @@ def get_current_dns(interface: str) -> list[str]:
     try:
         result = subprocess.run(
             ["netsh", "interface", "ip", "show", "dns", f"name={interface}"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", startupinfo=_SW
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            creationflags=_CF
         )
         dns_list = []
         for line in result.stdout.split("\n"):
@@ -86,7 +85,7 @@ def set_dns(interface: str, primary: str, secondary: str = None) -> bool:
         result = subprocess.run(
             ["netsh", "interface", "ip", "set", "dns",
              f"name={interface}", "static", primary, "validate=no"],
-            capture_output=True, text=True, startupinfo=_SW
+            capture_output=True, text=True, creationflags=_CF
         )
         if result.returncode != 0:
             return False
@@ -95,7 +94,7 @@ def set_dns(interface: str, primary: str, secondary: str = None) -> bool:
             subprocess.run(
                 ["netsh", "interface", "ip", "add", "dns",
                  f"name={interface}", secondary, "index=2", "validate=no"],
-                capture_output=True, text=True
+                capture_output=True, text=True, creationflags=_CF
             )
         return True
     except Exception:
@@ -108,7 +107,7 @@ def set_dns_auto(interface: str) -> bool:
         result = subprocess.run(
             ["netsh", "interface", "ip", "set", "dns",
              f"name={interface}", "dhcp"],
-            capture_output=True, text=True, startupinfo=_SW
+            capture_output=True, text=True, creationflags=_CF
         )
         return result.returncode == 0
     except Exception:
@@ -127,7 +126,7 @@ class DohManager:
     def __init__(self, provider: str = "cloudflare", log_callback=None):
         self._provider = provider
         self._log = log_callback or print
-        self._original_dns = {}  # interface -> [dns_list] for rollback
+        self._original_dns = {}
         self._active = False
 
     @property
@@ -149,7 +148,6 @@ class DohManager:
 
         success = False
         for iface in interfaces:
-            # Save current DNS for rollback
             current = get_current_dns(iface)
             self._original_dns[iface] = current
 

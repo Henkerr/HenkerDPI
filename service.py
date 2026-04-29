@@ -13,9 +13,7 @@ SCRIPT_PATH = os.path.join(SCRIPT_DIR, "main.py")
 PID_FILE = os.path.join(SCRIPT_DIR, "henkerdpi_v2.pid")
 
 # Hide console windows for all subprocess calls
-_SW = subprocess.STARTUPINFO()
-_SW.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-_SW.wShowWindow = 0  # SW_HIDE
+_CF = subprocess.CREATE_NO_WINDOW
 
 
 def start():
@@ -47,7 +45,7 @@ def stop():
     if pid.isdigit():
         result = subprocess.run(
             ["taskkill", "/f", "/pid", pid],
-            capture_output=True, text=True, startupinfo=_SW,
+            capture_output=True, text=True, creationflags=_CF,
         )
         if result.returncode == 0:
             print(f"[-] HenkerDPI V2 stopped (PID: {pid})")
@@ -84,7 +82,7 @@ def install():
         "/rl", "highest",
         "/f",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, startupinfo=_SW)
+    result = subprocess.run(cmd, capture_output=True, text=True, creationflags=_CF)
     if result.returncode == 0:
         print("[+] Added to Windows startup!")
     else:
@@ -95,7 +93,7 @@ def uninstall():
     """Remove from Windows startup."""
     stop()
     cmd = ["schtasks", "/delete", "/tn", SERVICE_NAME, "/f"]
-    result = subprocess.run(cmd, capture_output=True, text=True, startupinfo=_SW)
+    result = subprocess.run(cmd, capture_output=True, text=True, creationflags=_CF)
     if result.returncode == 0:
         print("[-] Removed from Windows startup.")
     else:
@@ -111,7 +109,7 @@ def _is_running():
         return False
     result = subprocess.run(
         ["tasklist", "/fi", f"PID eq {pid}"],
-        capture_output=True, text=True, startupinfo=_SW,
+        capture_output=True, text=True, creationflags=_CF,
     )
     return "python" in result.stdout.lower()
 
