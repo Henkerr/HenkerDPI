@@ -1,6 +1,17 @@
+<div align="center">
+
 # HenkerDPI V2
 
-A general-purpose DPI (Deep Packet Inspection) bypass tool for Windows. Access any blocked website freely without a VPN.
+**General-purpose DPI bypass — Windows & macOS**
+
+[![Windows](https://img.shields.io/badge/Windows-10%2F11-blue?logo=windows)](https://github.com/Henkerr/HenkerDPI-V2)
+[![macOS](https://img.shields.io/badge/macOS-12%2B-white?logo=apple)](https://github.com/Henkerr/HenkerDPI-V2/tree/master/macos)
+[![Python](https://img.shields.io/badge/python-3.10%2B-yellow?logo=python)](https://python.org)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+</div>
+
+A general-purpose DPI (Deep Packet Inspection) bypass tool for **Windows and macOS**. Access any blocked website freely without a VPN.
 
 HenkerDPI works at the packet level — it manipulates TLS handshake packets to prevent ISP-level DPI systems from detecting and blocking your connections. Unlike a VPN, it adds virtually zero latency and doesn't route your traffic through external servers.
 
@@ -14,7 +25,8 @@ HenkerDPI works at the packet level — it manipulates TLS handshake packets to 
 - **5 Themes** — Phantom, Ocean, Matrix, Inferno, Obsidian
 - **9 Languages** — English, Turkish, Hindi, Japanese, Chinese, Russian, German, Danish + more
 - **System Tray** — Minimize to tray, runs silently in background
-- **Autostart** — Option to start on Windows boot
+- **Autostart** — Windows Task Scheduler / macOS LaunchAgent
+- **Cross-platform** — Windows 10/11 + macOS 12+
 
 ## How It Works
 
@@ -32,11 +44,11 @@ Additionally:
 
 ## Installation
 
-### Installer (Recommended)
+### Windows — Installer (Recommended)
 
 Download the latest `HenkerDPI_V2_Setup.exe` from [Releases](../../releases) and run it.
 
-### From Source
+### Windows — From Source
 
 ```bash
 git clone https://github.com/Henkerr/HenkerDPI-V2.git
@@ -45,14 +57,34 @@ pip install -r requirements.txt
 python gui.py  # Must run as Administrator
 ```
 
-### Build EXE
+### macOS
+
+```bash
+git clone https://github.com/Henkerr/HenkerDPI-V2.git
+cd HenkerDPI-V2/macos
+pip3 install -r requirements.txt
+sudo python3 gui.py  # Root required for raw sockets + pf
+```
+
+> **Note:** Root privileges are required for raw socket injection and pf (packet filter) rules.
+
+### Build EXE (Windows)
 
 ```bash
 python -m PyInstaller HenkerDPI_V2.spec --clean -y
 # Output: dist/HenkerDPI_V2.exe
 ```
 
-### Build Installer
+### Build App (macOS)
+
+```bash
+cd macos
+chmod +x build_mac.sh
+./build_mac.sh
+# Output: dist/HenkerDPI_V2.app
+```
+
+### Build Installer (Windows)
 
 Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 
@@ -63,15 +95,26 @@ ISCC.exe setup.iss
 
 ## Requirements
 
+### Windows
 - Windows 10/11 (64-bit)
-- Administrator privileges (required for WinDivert packet interception)
-- Python 3.10+ (for running from source)
-
-### Dependencies
+- Administrator privileges (required for WinDivert)
+- Python 3.10+
 
 | Package | Purpose |
 |---------|---------|
 | `pydivert` | WinDivert wrapper for kernel-level packet interception |
+| `customtkinter` | Modern dark-themed GUI framework |
+| `Pillow` | Power button rendering with glow animations |
+| `pystray` | System tray integration |
+
+### macOS
+- macOS 12 Monterey or later
+- Root privileges (required for raw sockets + pf)
+- Python 3.10+
+
+| Package | Purpose |
+|---------|---------|
+| `scapy` | Packet sniffing and raw socket injection |
 | `customtkinter` | Modern dark-themed GUI framework |
 | `Pillow` | Power button rendering with glow animations |
 | `pystray` | System tray integration |
@@ -98,13 +141,24 @@ python service.py stop   # Stop background service
 ## Architecture
 
 ```
-gui.py           — CustomTkinter GUI (themes, animations, controls)
-main.py          — BypassEngine (packet interception loop)
-strategies.py    — DPI bypass logic (SNI extraction, fragmentation, fake packets)
-config.py        — Categories, DoH providers, settings management
-doh.py           — DNS-over-HTTPS manager (system DNS redirect)
-lang.py          — Multi-language support (9 languages)
-service.py       — Windows service manager (background mode)
+HenkerDPI-V2/
+├── gui.py             — CustomTkinter GUI (themes, animations, controls)
+├── main.py            — BypassEngine (WinDivert packet interception)
+├── strategies.py      — DPI bypass logic (SNI extraction, fragmentation)
+├── config.py          — Categories, DoH providers, settings management
+├── doh.py             — DNS-over-HTTPS manager (netsh/PowerShell)
+├── lang.py            — Multi-language support (9 languages)
+├── service.py         — Windows service manager (Task Scheduler)
+└── macos/             — macOS version
+    ├── gui.py         — macOS GUI (fcntl lock, LaunchAgent)
+    ├── main.py        — BypassEngine (scapy + raw sockets)
+    ├── strategies.py  — Same bypass logic, raw socket injection
+    ├── pf_manager.py  — pf (pfctl) RST drop + QUIC block
+    ├── doh.py         — DoH via networksetup
+    ├── config.py      — Shared config (platform-independent)
+    ├── lang.py        — i18n (9 languages)
+    ├── service.py     — LaunchAgent service manager
+    └── build_mac.sh   — PyInstaller build script
 ```
 
 ## HenkerDPI V1 vs V2
@@ -116,6 +170,19 @@ service.py       — Windows service manager (background mode)
 | Categories | None | 8 presets |
 | DNS Bypass | None | DoH (Cloudflare/Google/Quad9) |
 | Local traffic | Not filtered | Excluded (127.x, 192.168.x) |
+
+## Windows vs macOS
+
+| Component | Windows | macOS |
+|-----------|---------|-------|
+| Packet interception | WinDivert (pydivert) | scapy sniff + raw sockets |
+| RST/QUIC block | Kernel-level WinDivert DROP | pf (pfctl) anchor rules |
+| DNS management | netsh / PowerShell | networksetup |
+| Auto-start | Task Scheduler (schtasks) | LaunchAgent (launchctl) |
+| Single instance | CreateMutexW | fcntl.flock() |
+| Admin check | ctypes.windll.IsUserAnAdmin | os.geteuid() == 0 |
+
+The bypass logic (TTL fake packet, SNI fragmentation, disorder) is identical across both platforms.
 
 ## License
 
