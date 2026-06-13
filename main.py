@@ -9,9 +9,9 @@ import threading
 import ctypes
 import pydivert
 from pydivert.consts import Flag
-from strategies import extract_sni, should_bypass, tcp_fragment_and_send
+from strategies import extract_sni, should_bypass_fast, tcp_fragment_and_send
 from doh import DohManager
-from config import load_settings, MODE_ALL
+from config import load_settings, get_all_domains, MODE_ALL
 from lang import t
 
 
@@ -34,20 +34,36 @@ class BypassEngine:
         self._main_handle = None
         self._doh = None
         self._settings = load_settings()
+        self._mode = MODE_ALL
+        self._domain_set = set()
+        self._refresh_match_cache()
         self.stats = {"bypassed": 0, "passed": 0}
         self.running = False
+
+    def _refresh_match_cache(self):
+        """Precompute (mode, domain_set) so the packet loop does no disk I/O.
+
+        In selective mode the domain set is built once here instead of
+        rebuilding the list and re-reading custom_domains.json per packet.
+        """
+        self._mode = self._settings.get("mode", MODE_ALL)
+        if self._mode == MODE_ALL:
+            self._domain_set = set()
+        else:
+            self._domain_set = set(get_all_domains(self._settings))
 
     def reload_settings(self):
         """Reload settings (called when mode changes from GUI)."""
         self._settings = load_settings()
-        mode = self._settings.get("mode", MODE_ALL)
-        self._log(f"[*] Mode: {mode.upper()}")
+        self._refresh_match_cache()
+        self._log(f"[*] Mode: {self._mode.upper()}")
 
     def start(self):
         """Run bypass loop. Call from a separate thread."""
         self._stop_event.clear()
         self.stats = {"bypassed": 0, "passed": 0}
         self._settings = load_settings()
+        self._refresh_match_cache()
 
         # Start DoH (secure DNS)
         if self._settings.get("doh_enabled", True):
@@ -79,7 +95,7 @@ class BypassEngine:
             "ip.DstAddr != 127.0.0.1"
         )
 
-        mode = self._settings.get("mode", MODE_ALL)
+        mode = self._mode
         self.running = True
         self._log(t("engine_active"))
         self._log(f"[*] Mode: {mode.upper()}")
@@ -104,7 +120,7 @@ class BypassEngine:
                     # TLS ClientHello check
                     if len(payload) > 5 and payload[0] == 0x16:
                         sni = extract_sni(payload)
-                        if sni and should_bypass(sni, self._settings):
+                        if sni and should_bypass_fast(sni, self._mode, self._domain_set):
                             if tcp_fragment_and_send(self._main_handle, packet, sni, self._verbose):
                                 self.stats["bypassed"] += 1
                                 # In ALL mode, log every 50th bypass to reduce noise
@@ -120,6 +136,13 @@ class BypassEngine:
                 except Exception:
                     if self._stop_event.is_set():
                         break
+                    # Never drop a packet on an unexpected error — forward it
+                    # so the connection degrades to passthrough instead of
+                    # hanging (the "site won't open sometimes" symptom).
+                    try:
+                        self._main_handle.send(packet)
+                    except Exception:
+                        pass
 
         except Exception as e:
             if not self._stop_event.is_set():

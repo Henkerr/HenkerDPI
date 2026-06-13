@@ -49,7 +49,7 @@ def extract_sni(data: bytes) -> str | None:
                 sni_len = struct.unpack("!H", data[offset + 3:offset + 5])[0]
                 return data[offset + 5:offset + 5 + sni_len].decode("ascii")
             offset += ext_len
-    except (IndexError, struct.error):
+    except (IndexError, struct.error, UnicodeDecodeError):
         pass
     return None
 
@@ -124,6 +124,37 @@ def should_bypass(sni: str | None, settings: dict = None) -> bool:
     return any(sni == domain or sni.endswith("." + domain) for domain in domains)
 
 
+def domain_matches(sni: str, domain_set: set) -> bool:
+    """O(label) suffix match against a precomputed domain set.
+
+    Matches the host itself and every parent domain, e.g.
+    cdn.media.discordapp.net -> media.discordapp.net -> discordapp.net -> net.
+    """
+    if sni in domain_set:
+        return True
+    idx = sni.find(".")
+    while idx != -1:
+        if sni[idx + 1:] in domain_set:
+            return True
+        idx = sni.find(".", idx + 1)
+    return False
+
+
+def should_bypass_fast(sni: str | None, mode: str, domain_set: set) -> bool:
+    """Hot-path bypass decision using a cached (mode, domain_set).
+
+    Equivalent to should_bypass() but does NO disk I/O or list rebuild per
+    packet — the engine precomputes the set once on start/reload.
+    """
+    if not sni:
+        return False
+    if _is_local_sni(sni):
+        return False
+    if mode == MODE_ALL:
+        return True
+    return domain_matches(sni, domain_set)
+
+
 def _build_packet(headers: bytes, payload_data: bytes, ip_hlen: int,
                   seq: int, ack: int, interface, direction, ttl: int = 0):
     """Build a standalone TCP packet. ttl=0 keeps original TTL."""
@@ -182,24 +213,35 @@ def tcp_fragment_and_send(w, packet, sni: str, verbose: bool = False) -> bool:
     else:
         fake_payload = payload
 
-    # 1) FAKE: low TTL + spoofed SNI — reaches DPI but expires before server
-    fake = _build_packet(headers, fake_payload, ip_hlen,
-                         orig_seq, orig_ack,
-                         iface, direction, ttl=FAKE_TTL)
-    w.send(fake)
+    # Build all three packets BEFORE sending any. If construction fails
+    # (malformed packet), return False so the caller forwards the original
+    # untouched — never leave a connection with a half-sent burst.
+    try:
+        # 1) FAKE: low TTL + spoofed SNI — reaches DPI but expires before server
+        fake = _build_packet(headers, fake_payload, ip_hlen,
+                             orig_seq, orig_ack,
+                             iface, direction, ttl=FAKE_TTL)
+        # 2) FRAGMENT 2 FIRST (disorder — DPI can't reassemble out-of-order)
+        frag2 = _build_packet(headers, payload[split_pos:], ip_hlen,
+                              orig_seq + split_pos, orig_ack,
+                              iface, direction)
+        # 3) FRAGMENT 1 (contains first half of real SNI)
+        frag1 = _build_packet(headers, payload[:split_pos], ip_hlen,
+                              orig_seq, orig_ack,
+                              iface, direction)
+    except (IndexError, struct.error):
+        return False
 
-    # 2) FRAGMENT 2 FIRST (disorder — DPI can't reassemble out-of-order)
-    frag2 = _build_packet(headers, payload[split_pos:], ip_hlen,
-                          orig_seq + split_pos, orig_ack,
-                          iface, direction)
-    w.send(frag2)
-
-    # 3) FRAGMENT 1 (contains first half of real SNI)
-    frag1 = _build_packet(headers, payload[:split_pos], ip_hlen,
-                          orig_seq, orig_ack,
-                          iface, direction)
-    w.send(frag1)
-
+    # Send phase: original was already dropped by the caller, so a transient
+    # send error here can't be recovered by re-sending the original (would
+    # duplicate seq). Swallow it — TCP will retransmit the real ClientHello.
+    try:
+        w.send(fake)
+        w.send(frag2)
+        w.send(frag1)
+    except Exception:
+        if verbose:
+            print("[!] fragment send failed")
     return True
 
 
