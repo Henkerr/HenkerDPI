@@ -7,7 +7,9 @@ import os
 import subprocess
 
 SERVICE_NAME = "HenkerDPI_V2"
-PYTHON_PATH = r"C:\Users\mumin\AppData\Local\Programs\Python\Python310\python.exe"
+# Use the interpreter that is actually running this script — never a
+# hardcoded per-machine path (which breaks on any other install).
+PYTHON_PATH = sys.executable
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_PATH = os.path.join(SCRIPT_DIR, "main.py")
 PID_FILE = os.path.join(SCRIPT_DIR, "henkerdpi_v2.pid")

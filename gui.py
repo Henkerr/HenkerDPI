@@ -38,7 +38,6 @@ ctk.set_appearance_mode("dark")
 
 SERVICE_NAME = "HenkerDPI_V2"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PYTHON_PATH = r"C:\Users\mumin\AppData\Local\Programs\Python\Python310\python.exe"
 FONT = "Helvetica"
 
 GREEN = "#4ade80"
@@ -46,6 +45,27 @@ RED = "#f87171"
 
 # Hide console windows for subprocess calls
 _CF = subprocess.CREATE_NO_WINDOW
+
+
+def _autostart_target():
+    """Build the command Task Scheduler runs at logon.
+
+    When frozen (PyInstaller onefile) we MUST point at the real installed
+    .exe via sys.executable. SCRIPT_DIR then resolves to an ephemeral
+    %TEMP%\\_MEIxxxx extraction folder that Windows deletes on exit, so a
+    task pointing there fails every boot with "file not found" (result 2).
+
+    --autostart tells the app to start the engine and drop to the tray
+    instead of opening the window.
+    """
+    if getattr(sys, "frozen", False):
+        return f'"{sys.executable}" --autostart'
+    # Dev / loose-script mode: use the current interpreter (no hardcoded
+    # path), preferring pythonw.exe so no console window flashes on boot.
+    pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    if not os.path.exists(pyw):
+        pyw = sys.executable
+    return f'"{pyw}" "{os.path.join(SCRIPT_DIR, "gui.py")}" --autostart'
 
 # 5 themes
 THEMES = {
@@ -231,6 +251,22 @@ class HenkerDPIApp(ctk.CTk):
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.bind("<Unmap>", self._on_minimize)
+
+        # Launched by the boot task (schtasks --autostart): start the engine
+        # and go straight to the tray without showing the window.
+        if "--autostart" in sys.argv or "--minimized" in sys.argv:
+            self.after(400, self._enter_background)
+
+    def _enter_background(self):
+        """Boot autostart: start the bypass and drop to the system tray."""
+        if not self._running:
+            self._start()
+        if HAS_TRAY and HAS_PIL:
+            self._show_tray()
+            if self._tray_icon:          # only hide if a tray icon really exists
+                self.withdraw()
+                return
+        self.iconify()                   # fallback: minimise, stay reachable
 
     def _render_power_frames(self):
         pil_off, pil_on = self._render_pil_frames()
@@ -1090,16 +1126,17 @@ class HenkerDPIApp(ctk.CTk):
 
     def _toggle_auto(self):
         if self._auto_var.get():
-            script = os.path.join(SCRIPT_DIR, "main.py")
             r = subprocess.run([
                 "schtasks", "/create", "/tn", SERVICE_NAME,
-                "/tr", f'"{PYTHON_PATH}" "{script}"',
+                "/tr", _autostart_target(),
                 "/sc", "onlogon", "/rl", "highest", "/f"
             ], capture_output=True, text=True, creationflags=_CF)
             if r.returncode == 0:
                 self._log_queue.put(t("autostart_added", self._lang))
             else:
                 self._auto_var.set(False)
+                if r.stderr:
+                    self._log_queue.put(f"[!] {r.stderr.strip()}")
         else:
             subprocess.run(["schtasks", "/delete", "/tn", SERVICE_NAME, "/f"],
                            capture_output=True, creationflags=_CF)
