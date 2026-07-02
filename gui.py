@@ -16,6 +16,7 @@ import time
 import math
 
 from main import BypassEngine, is_admin
+from doh import restore_dns_from_journal
 from lang import LANGUAGES, load_lang_pref, save_lang_pref, t
 from config import (
     load_custom_domains, save_custom_domains, load_settings, save_settings,
@@ -67,56 +68,47 @@ def _autostart_target():
         pyw = sys.executable
     return f'"{pyw}" "{os.path.join(SCRIPT_DIR, "gui.py")}" --autostart'
 
-# 5 themes
+# Premium palettes (redesigned for public release). Pick via the settings dots.
 THEMES = {
-    "phantom": {
-        "name": "Phantom",
-        "bg": "#08080c", "card": "#0d0d14", "border": "#1e1e2e",
-        "accent": "#8b5cf6", "accent_dim": "#4c1d95",
-        "secondary": "#c084fc", "tertiary": "#6366f1",
-        "fg": "#f5f5fa", "fg2": "#b8b8c4", "fg3": "#74748a",
-        "glow_active": (139, 92, 246), "glow_hover": (110, 60, 220),
-        "ring_hover": (160, 120, 255),
+    "graphite": {
+        "name": "Graphite",
+        "bg": "#0a0b0d", "card": "#141518", "border": "#24262b",
+        "accent": "#4d8bff", "accent_dim": "#294a99",
+        "secondary": "#38bdf8", "tertiary": "#6ea3ff",
+        "fg": "#f4f6f9", "fg2": "#9499a6", "fg3": "#6d7280",
+        "glow_active": (77, 139, 255), "glow_hover": (48, 108, 224),
+        "ring_hover": (130, 175, 255),
     },
-    "ocean": {
-        "name": "Ocean",
-        "bg": "#080a12", "card": "#0c1018", "border": "#1a2233",
-        "accent": "#3b82f6", "accent_dim": "#1e3a5f",
-        "secondary": "#22d3ee", "tertiary": "#8b5cf6",
-        "fg": "#f1f5f9", "fg2": "#94a3b8", "fg3": "#475569",
-        "glow_active": (59, 130, 246), "glow_hover": (30, 80, 246),
-        "ring_hover": (100, 160, 255),
+    "iris": {
+        "name": "Iris",
+        "bg": "#0a0a0f", "card": "#14141f", "border": "#26263a",
+        "accent": "#6d6af2", "accent_dim": "#3a3499",
+        "secondary": "#8b87ff", "tertiary": "#5b78f0",
+        "fg": "#f6f7fb", "fg2": "#aaacbe", "fg3": "#72748c",
+        "glow_active": (109, 106, 242), "glow_hover": (88, 82, 214),
+        "ring_hover": (150, 148, 255),
     },
-    "matrix": {
-        "name": "Matrix",
-        "bg": "#060a06", "card": "#0a120a", "border": "#162616",
-        "accent": "#22c55e", "accent_dim": "#14532d",
-        "secondary": "#a3e635", "tertiary": "#2dd4bf",
-        "fg": "#ecfdf5", "fg2": "#7dab8a", "fg3": "#4a6a52",
-        "glow_active": (34, 197, 94), "glow_hover": (20, 160, 60),
-        "ring_hover": (80, 220, 120),
-    },
-    "inferno": {
-        "name": "Inferno",
-        "bg": "#0a0606", "card": "#120a0a", "border": "#261616",
-        "accent": "#ef4444", "accent_dim": "#7f1d1d",
-        "secondary": "#f97316", "tertiary": "#eab308",
-        "fg": "#fef2f2", "fg2": "#b09090", "fg3": "#6b3a3a",
-        "glow_active": (239, 68, 68), "glow_hover": (200, 40, 40),
-        "ring_hover": (255, 100, 100),
+    "halcyon": {
+        "name": "Halcyon",
+        "bg": "#070b0e", "card": "#0e161a", "border": "#1e2c33",
+        "accent": "#2dd4bf", "accent_dim": "#0f766e",
+        "secondary": "#38cfe0", "tertiary": "#5eead4",
+        "fg": "#eef5f5", "fg2": "#8fa5aa", "fg3": "#5f767b",
+        "glow_active": (45, 212, 191), "glow_hover": (24, 180, 164),
+        "ring_hover": (124, 237, 222),
     },
     "gold": {
         "name": "Obsidian",
-        "bg": "#0a0806", "card": "#12100a", "border": "#262016",
-        "accent": "#f59e0b", "accent_dim": "#78350f",
-        "secondary": "#d97706", "tertiary": "#ea580c",
-        "fg": "#fefce8", "fg2": "#b09a70", "fg3": "#6b5a3a",
-        "glow_active": (245, 158, 11), "glow_hover": (200, 120, 10),
-        "ring_hover": (255, 180, 60),
+        "bg": "#0a0906", "card": "#12100c", "border": "#282219",
+        "accent": "#e8b25a", "accent_dim": "#7a5424",
+        "secondary": "#e0954e", "tertiary": "#cdaa6e",
+        "fg": "#f7f3ea", "fg2": "#a39a86", "fg3": "#8b8271",
+        "glow_active": (232, 178, 90), "glow_hover": (196, 142, 62),
+        "ring_hover": (246, 206, 140),
     },
 }
 
-DEFAULT_THEME = "phantom"
+DEFAULT_THEME = "graphite"
 THEME_FILE = os.path.join(SCRIPT_DIR, "theme_pref.json")
 
 NUM_HOVER_FRAMES = 4
@@ -177,7 +169,10 @@ def _make_power_button(size, active, hover=0.0, theme_key="phantom"):
         icon_col = _lerp_color((*accent_rgb, 255), (*icon_bright, 255), hover)
         inner_col = (*inner_active, 255)
     else:
-        ring_col = _lerp_color((*border_rgb, 255), (*rh, 255), hover)
+        # Lift the OFF-state ring above the near-invisible border colour so the
+        # power button reads as a clear, tappable control even when idle.
+        base_ring = tuple(min(c + 48, 255) for c in border_rgb)
+        ring_col = _lerp_color((*base_ring, 255), (*rh, 255), hover)
         glow_col = (*gh, int(70 * hover))
         icon_dim = tuple(min(c + 25, 255) for c in border_rgb)
         icon_col = _lerp_color((*icon_dim, 210), (255, 255, 255, 255), hover)
@@ -222,9 +217,9 @@ class HenkerDPIApp(ctk.CTk):
         self._theme = _load_theme()
         self._settings = load_settings()
 
-        self.title("HenkerDPI V2")
-        self.geometry("420x700")
-        self.minsize(380, 600)
+        self.title("HenkerDPI")
+        self.geometry("420x600")
+        self.minsize(400, 520)
         self.configure(fg_color=THEMES[self._theme]["bg"])
 
         icon_path = os.path.join(SCRIPT_DIR, "icon.ico")
@@ -277,8 +272,8 @@ class HenkerDPIApp(ctk.CTk):
         pil_on = []
         for i in range(NUM_HOVER_FRAMES + 1):
             h = i / NUM_HOVER_FRAMES
-            pil_off.append(_make_power_button(140, False, h, self._theme))
-            pil_on.append(_make_power_button(140, True, h, self._theme))
+            pil_off.append(_make_power_button(164, False, h, self._theme))
+            pil_on.append(_make_power_button(164, True, h, self._theme))
         return pil_off, pil_on
 
     def _apply_pil_frames(self, pil_off, pil_on):
@@ -320,9 +315,9 @@ class HenkerDPIApp(ctk.CTk):
         self._henker_label = ctk.CTkLabel(self._header, text="HENKER",
                      font=ctk.CTkFont(FONT, 14, "bold"), text_color=th["fg"])
         self._henker_label.pack(side="left", padx=(16, 0))
-        self._dpi_label = ctk.CTkLabel(self._header, text="DPI V2",
+        self._dpi_label = ctk.CTkLabel(self._header, text="DPI",
                      font=ctk.CTkFont(FONT, 14, "bold"), text_color=th["accent"])
-        self._dpi_label.pack(side="left", padx=(3, 0))
+        self._dpi_label.pack(side="left", padx=(2, 0))
 
         self._badge = ctk.CTkLabel(
             self._header, text=t("badge_offline", self._lang),
@@ -330,53 +325,39 @@ class HenkerDPIApp(ctk.CTk):
             fg_color=th["border"], corner_radius=8)
         self._badge.pack(side="right", padx=(0, 16))
 
-        # Language selector
-        lang_names = [LANGUAGES[k]["name"] for k in LANGUAGES]
-        current_name = LANGUAGES[self._lang]["name"]
-        self._lang_menu = ctk.CTkOptionMenu(
-            self._header, values=lang_names, width=80, height=22,
-            font=ctk.CTkFont(FONT, 10),
-            fg_color=th["border"], button_color=th["accent_dim"],
-            button_hover_color=th["accent"], dropdown_fg_color=th["card"],
-            command=self._change_lang)
-        self._lang_menu.set(current_name)
-        self._lang_menu.pack(side="right", padx=(0, 6))
-
-        # Theme dots
-        self._theme_frame = ctk.CTkFrame(self._header, fg_color="transparent")
-        self._theme_frame.pack(side="right", padx=(0, 6))
-        for key, tdata in THEMES.items():
-            dot = ctk.CTkButton(
-                self._theme_frame, text="", width=12, height=12,
-                corner_radius=6, fg_color=tdata["accent"],
-                hover_color=tdata["accent"], border_width=0,
-                command=lambda k=key: self._change_theme(k))
-            dot.pack(side="left", padx=2)
-            self._theme_dots.append((key, dot))
+        # Settings (gear) — reveals the advanced panel below the home screen.
+        # Theme + language now live inside that panel so the header stays clean.
+        self._settings_open = False
+        self._gear_btn = ctk.CTkButton(
+            self._header, text="⚙", width=32, height=26,
+            font=ctk.CTkFont(FONT, 16),
+            fg_color="transparent", hover_color=th["border"],
+            text_color=th["fg2"], command=self._toggle_settings)
+        self._gear_btn.pack(side="right", padx=(0, 12))
 
         # === Main Content ===
         main = ctk.CTkFrame(self._scroll, fg_color="transparent")
-        main.pack(fill="both", expand=True, padx=12, pady=6)
+        main.pack(fill="both", expand=True, padx=16, pady=(12, 6))
 
         # --- Power Button Card ---
-        self._btn_card = ctk.CTkFrame(main, fg_color=th["card"], corner_radius=14,
+        self._btn_card = ctk.CTkFrame(main, fg_color=th["card"], corner_radius=18,
                                  border_width=1, border_color=th["border"])
         self._btn_card.pack(fill="x")
 
         self._status_text = ctk.CTkLabel(
             self._btn_card, text=t("status_off", self._lang),
-            font=ctk.CTkFont(FONT, 15, "bold"), text_color=th["fg2"])
-        self._status_text.pack(pady=(10, 0))
+            font=ctk.CTkFont(FONT, 20, "bold"), text_color=th["fg2"])
+        self._status_text.pack(pady=(22, 0))
 
         self._status_desc = ctk.CTkLabel(
             self._btn_card, text=t("desc_off", self._lang),
-            font=ctk.CTkFont(FONT, 11), text_color=th["fg3"])
-        self._status_desc.pack(pady=(2, 0))
+            font=ctk.CTkFont(FONT, 12), text_color=th["fg3"])
+        self._status_desc.pack(pady=(4, 0))
 
         self._power_label = tk.Label(self._btn_card, image=self._img_off,
                                       bg=th["card"], cursor="hand2",
                                       bd=0, highlightthickness=0)
-        self._power_label.pack(pady=(6, 10))
+        self._power_label.pack(pady=(14, 24))
         self._power_label.bind("<Button-1>", self._on_power_click)
         self._power_label.bind("<Enter>", self._on_hover_enter)
         self._power_label.bind("<Leave>", self._on_hover_leave)
@@ -385,7 +366,7 @@ class HenkerDPIApp(ctk.CTk):
         # --- Mode Selector Card ---
         self._mode_card = ctk.CTkFrame(main, fg_color=th["card"], corner_radius=10,
                                         border_width=1, border_color=th["border"])
-        self._mode_card.pack(fill="x", pady=(6, 0))
+        self._mode_card.pack(fill="x", pady=(10, 0))
 
         mode_header = ctk.CTkFrame(self._mode_card, fg_color="transparent")
         mode_header.pack(fill="x", padx=10, pady=(8, 4))
@@ -417,7 +398,7 @@ class HenkerDPIApp(ctk.CTk):
         # --- Categories Card (sadece selective modda) ---
         self._cat_card = ctk.CTkFrame(main, fg_color=th["card"], corner_radius=10,
                                        border_width=1, border_color=th["border"])
-        self._cat_card.pack(fill="x", pady=(6, 0))
+        self._cat_card.pack(fill="x", pady=(10, 0))
 
         cat_header = ctk.CTkFrame(self._cat_card, fg_color="transparent")
         cat_header.pack(fill="x", padx=10, pady=(8, 4))
@@ -457,7 +438,7 @@ class HenkerDPIApp(ctk.CTk):
 
         # --- Stats Row ---
         stats = ctk.CTkFrame(main, fg_color="transparent")
-        stats.pack(fill="x", pady=(6, 0))
+        stats.pack(fill="x", pady=(10, 0))
 
         self._cards = {}
         self._card_labels = {}
@@ -465,14 +446,14 @@ class HenkerDPIApp(ctk.CTk):
         self._stat_frames = {}
         self._stat_title_labels = []
         self._stat_value_labels = []
-        for i, (key, title_key, accent) in enumerate([
+        _stat_defs = [
             ("bypass", "stat_bypass", th["secondary"]),
-            ("passed", "stat_passed", th["accent"]),
-            ("uptime", "stat_uptime", th["tertiary"])
-        ]):
+            ("uptime", "stat_uptime", th["tertiary"]),
+        ]
+        for i, (key, title_key, accent) in enumerate(_stat_defs):
             card = ctk.CTkFrame(stats, fg_color=th["card"], corner_radius=12,
                                 border_width=1, border_color=th["border"])
-            px = (0 if i == 0 else 3, 0 if i == 2 else 3)
+            px = (0 if i == 0 else 3, 0 if i == len(_stat_defs) - 1 else 3)
             card.pack(side="left", expand=True, fill="x", padx=px)
             self._stat_frames[key] = card
 
@@ -490,43 +471,49 @@ class HenkerDPIApp(ctk.CTk):
             self._cards[key] = lbl
             self._stat_value_labels.append(lbl)
 
-        # --- Info Bar ---
-        self._info_frame = ctk.CTkFrame(main, fg_color=th["card"], corner_radius=10,
-                             border_width=1, border_color=th["border"])
-        self._info_frame.pack(fill="x", pady=(6, 0))
-
-        info_row = ctk.CTkFrame(self._info_frame, fg_color="transparent")
-        info_row.pack(padx=6, pady=6)
-
+        # (Removed the technical "TTL Fake / 2 bytes / RST Kernel / QUIC DROP"
+        # info bar — internal jargon that meant nothing to users and read as
+        # cluttered/amateur. Kept as empty lists so i18n/theme loops no-op.)
         self._info_labels = []
         self._info_value_labels = []
         self._info_key_labels = []
-        info_colors = [th["accent"], th["secondary"], th["tertiary"], GREEN]
-        for idx, (lbl_key, val, clr) in enumerate([
-            ("info_method", "TTL Fake", info_colors[0]),
-            ("info_fragment", "2 bytes", info_colors[1]),
-            ("RST", "Kernel", info_colors[2]),
-            ("QUIC", "DROP", info_colors[3]),
-        ]):
-            col = ctk.CTkFrame(info_row, fg_color="transparent", width=80)
-            col.pack(side="left", expand=True)
-            lbl_text = t(lbl_key, self._lang) if lbl_key.startswith("info_") else lbl_key
-            info_lbl = ctk.CTkLabel(col, text=lbl_text,
-                                    font=ctk.CTkFont(FONT, 9), text_color=th["fg3"])
-            info_lbl.pack()
-            self._info_key_labels.append(info_lbl)
-            if lbl_key.startswith("info_"):
-                self._info_labels.append((info_lbl, lbl_key))
-            val_lbl = ctk.CTkLabel(col, text=val, font=ctk.CTkFont(FONT, 11, "bold"),
-                         text_color=clr)
-            val_lbl.pack()
-            if idx < 3:
-                self._info_value_labels.append(val_lbl)
+
+        # === Settings panel (hidden by default; toggled by the header gear) ===
+        # Keeps the home screen to just power + status + stats + mode. Every
+        # technical control lives here, so the default view stays clean and
+        # consumer-friendly. Created but NOT packed -> hidden until toggled.
+        self._settings_panel = ctk.CTkFrame(main, fg_color="transparent")
+
+        # --- Appearance (theme dots + language) ---
+        appear_card = ctk.CTkFrame(self._settings_panel, fg_color=th["card"],
+                                   corner_radius=10, border_width=1,
+                                   border_color=th["border"])
+        appear_card.pack(fill="x", pady=(10, 0))
+        appear_row = ctk.CTkFrame(appear_card, fg_color="transparent")
+        appear_row.pack(fill="x", padx=10, pady=8)
+        self._theme_frame = ctk.CTkFrame(appear_row, fg_color="transparent")
+        self._theme_frame.pack(side="left")
+        for key, tdata in THEMES.items():
+            dot = ctk.CTkButton(
+                self._theme_frame, text="", width=22, height=22,
+                corner_radius=11, fg_color=tdata["accent"],
+                hover_color=tdata["accent"], border_width=0,
+                command=lambda k=key: self._change_theme(k))
+            dot.pack(side="left", padx=4)
+            self._theme_dots.append((key, dot))
+        self._lang_menu = ctk.CTkOptionMenu(
+            appear_row, values=[LANGUAGES[k]["name"] for k in LANGUAGES],
+            width=96, height=24, font=ctk.CTkFont(FONT, 10),
+            fg_color=th["border"], button_color=th["accent_dim"],
+            button_hover_color=th["accent"], dropdown_fg_color=th["card"],
+            command=self._change_lang)
+        self._lang_menu.set(LANGUAGES[self._lang]["name"])
+        self._lang_menu.pack(side="right")
 
         # --- DoH Card ---
-        self._doh_card = ctk.CTkFrame(main, fg_color=th["card"], corner_radius=10,
+        self._doh_card = ctk.CTkFrame(self._settings_panel, fg_color=th["card"], corner_radius=10,
                                        border_width=1, border_color=th["border"])
-        self._doh_card.pack(fill="x", pady=(6, 0))
+        self._doh_card.pack(fill="x", pady=(10, 0))
 
         doh_row = ctk.CTkFrame(self._doh_card, fg_color="transparent")
         doh_row.pack(fill="x", padx=10, pady=8)
@@ -561,9 +548,9 @@ class HenkerDPIApp(ctk.CTk):
         self._doh_desc.pack(side="left")
 
         # --- Custom Domains ---
-        self._domain_card = ctk.CTkFrame(main, fg_color=th["card"], corner_radius=10,
+        self._domain_card = ctk.CTkFrame(self._settings_panel, fg_color=th["card"], corner_radius=10,
                                           border_width=1, border_color=th["border"])
-        self._domain_card.pack(fill="x", pady=(6, 0))
+        self._domain_card.pack(fill="x", pady=(10, 0))
 
         domain_header = ctk.CTkFrame(self._domain_card, fg_color="transparent")
         domain_header.pack(fill="x", padx=10, pady=(8, 4))
@@ -596,9 +583,9 @@ class HenkerDPIApp(ctk.CTk):
         self._refresh_domain_list()
 
         # --- Log ---
-        self._log_card = ctk.CTkFrame(main, fg_color=th["card"], corner_radius=10,
+        self._log_card = ctk.CTkFrame(self._settings_panel, fg_color=th["card"], corner_radius=10,
                                  border_width=1, border_color=th["border"])
-        self._log_card.pack(fill="both", expand=True, pady=(6, 0))
+        self._log_card.pack(fill="both", expand=True, pady=(10, 0))
 
         log_h = ctk.CTkFrame(self._log_card, fg_color="transparent")
         log_h.pack(fill="x", padx=8, pady=(6, 2))
@@ -645,9 +632,9 @@ class HenkerDPIApp(ctk.CTk):
         self._log_widget.tag_configure("time", foreground=th["fg3"])
         self._log_widget.pack(fill="both", expand=True, padx=4, pady=(0, 4))
 
-        # --- Bottom ---
-        bottom = ctk.CTkFrame(main, fg_color="transparent")
-        bottom.pack(fill="x", pady=(6, 0))
+        # --- Bottom (autostart + version) ---
+        bottom = ctk.CTkFrame(self._settings_panel, fg_color="transparent")
+        bottom.pack(fill="x", pady=(10, 0))
 
         self._auto_var = ctk.BooleanVar()
         self._auto_switch = ctk.CTkSwitch(
@@ -660,6 +647,17 @@ class HenkerDPIApp(ctk.CTk):
         self._version_label = ctk.CTkLabel(bottom, text="v2.0",
                      font=ctk.CTkFont(FONT, 9), text_color=th["fg3"])
         self._version_label.pack(side="right")
+
+    def _toggle_settings(self):
+        """Show/hide the advanced settings panel. Default view stays clean."""
+        if self._settings_open:
+            self._settings_panel.pack_forget()
+            self._settings_open = False
+            self._gear_btn.configure(text="⚙")
+        else:
+            self._settings_panel.pack(fill="both", expand=True)
+            self._settings_open = True
+            self._gear_btn.configure(text="✕")
 
     # === Mode ===
 
@@ -679,7 +677,7 @@ class HenkerDPIApp(ctk.CTk):
             self._cat_card.pack_forget()
         else:
             # info_frame'den sonra pack et
-            self._cat_card.pack(fill="x", pady=(6, 0),
+            self._cat_card.pack(fill="x", pady=(10, 0),
                                 after=self._mode_card)
 
         # Engine çalışıyorsa ayarları güncelle
@@ -763,10 +761,10 @@ class HenkerDPIApp(ctk.CTk):
         th = THEMES[self._theme]
         for key, dot in self._theme_dots:
             if key == self._theme:
-                dot.configure(width=16, height=16, corner_radius=8,
+                dot.configure(width=24, height=24, corner_radius=12,
                               border_width=2, border_color=th["fg"])
             else:
-                dot.configure(width=12, height=12, corner_radius=6,
+                dot.configure(width=22, height=22, corner_radius=11,
                               border_width=0, border_color=th["card"])
 
     def _apply_theme(self):
@@ -819,22 +817,14 @@ class HenkerDPIApp(ctk.CTk):
         self._doh_desc.configure(text_color=th["fg3"])
 
         # Stats
-        stat_colors = [th["secondary"], th["accent"], th["tertiary"]]
-        for idx, key in enumerate(["bypass", "passed", "uptime"]):
+        stat_colors = [th["secondary"], th["tertiary"]]
+        for idx, key in enumerate(["bypass", "uptime"]):
             self._stat_frames[key].configure(fg_color=th["card"], border_color=th["border"])
             self._stat_bars[key].configure(fg_color=stat_colors[idx])
         for lbl in self._stat_title_labels:
             lbl.configure(text_color=th["fg3"])
         for lbl in self._stat_value_labels:
             lbl.configure(text_color=th["fg"])
-
-        # Info bar
-        self._info_frame.configure(fg_color=th["card"], border_color=th["border"])
-        info_colors = [th["accent"], th["secondary"], th["tertiary"]]
-        for lbl in self._info_key_labels:
-            lbl.configure(text_color=th["fg3"])
-        for idx, lbl in enumerate(self._info_value_labels):
-            lbl.configure(text_color=info_colors[idx])
 
         # Custom domains
         self._domain_card.configure(fg_color=th["card"], border_color=th["border"])
@@ -983,7 +973,6 @@ class HenkerDPIApp(ctk.CTk):
             return
         s = self._engine.stats
         self._cards["bypass"].configure(text=str(s["bypassed"]))
-        self._cards["passed"].configure(text=str(s["passed"]))
         if self._start_time:
             el = int(time.time() - self._start_time)
             m, sec = divmod(el, 60)
@@ -1218,6 +1207,15 @@ def main():
         sys.exit(1)
 
     ct.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Henkerr.HenkerDPI.V2")
+
+    # Heal DNS left pinned by a previous crashed/force-killed run, so a stale
+    # 1.1.1.1 override is reverted as soon as the app launches — even if the
+    # user never starts the engine this session.
+    try:
+        restore_dns_from_journal()
+    except Exception:
+        pass
+
     app = HenkerDPIApp()
     app.mainloop()
 

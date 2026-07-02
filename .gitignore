@@ -3,11 +3,14 @@ __pycache__/
 *.pyo
 build/
 dist/
+build_new/
+dist_new/
 *.spec
 *.egg-info/
 .env
 *.pid
 settings.json
+settings.json.bak
 custom_domains.json
 lang_pref.json
 theme_pref.json

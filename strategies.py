@@ -41,12 +41,20 @@ def extract_sni(data: bytes) -> str | None:
         extensions_len = struct.unpack("!H", data[offset:offset + 2])[0]
         offset += 2
         end = offset + extensions_len
-        while offset + 4 < end:
+        while offset + 4 <= end:
             ext_type = struct.unpack("!H", data[offset:offset + 2])[0]
             ext_len = struct.unpack("!H", data[offset + 2:offset + 4])[0]
             offset += 4
             if ext_type == 0x0000:
+                if offset + 5 > len(data):
+                    return None
                 sni_len = struct.unpack("!H", data[offset + 3:offset + 5])[0]
+                # If the SNI value straddles the TCP segment boundary, the
+                # ClientHello is split across packets — return None so the
+                # caller forwards this segment untouched rather than reading a
+                # truncated hostname or fragmenting a partial handshake.
+                if offset + 5 + sni_len > len(data):
+                    return None
                 return data[offset + 5:offset + 5 + sni_len].decode("ascii")
             offset += ext_len
     except (IndexError, struct.error, UnicodeDecodeError):
@@ -74,7 +82,7 @@ def find_sni_offset(data: bytes) -> int | None:
         extensions_len = struct.unpack("!H", data[offset:offset + 2])[0]
         offset += 2
         end = offset + extensions_len
-        while offset + 4 < end:
+        while offset + 4 <= end:
             ext_type = struct.unpack("!H", data[offset:offset + 2])[0]
             ext_len = struct.unpack("!H", data[offset + 2:offset + 4])[0]
             offset += 4
@@ -169,6 +177,25 @@ def _build_packet(headers: bytes, payload_data: bytes, ip_hlen: int,
     return pydivert.Packet(raw, interface=interface, direction=direction)
 
 
+def _corrupt_tcp_checksum(pkt, ip_hlen: int):
+    """Return a copy of pkt with a VALID IP checksum but an INVALID TCP checksum.
+
+    Used only for the decoy/fake packet: the IP checksum stays correct so
+    routers forward it and the DPI inspects the spoofed SNI, but the wrong TCP
+    checksum makes the destination host silently drop it. DPI middleboxes do
+    not verify L4 checksums, so the decoy still does its job — while the server
+    can no longer mistake it for the real ClientHello. This is what stops the
+    fake from poisoning handshakes to nearby servers.
+    """
+    pkt.recalculate_checksums()  # fills valid IP + TCP checksums (both were 0)
+    raw = bytearray(pkt.raw)
+    off = ip_hlen + 16  # TCP checksum field
+    csum = struct.unpack_from("!H", raw, off)[0]
+    struct.pack_into("!H", raw, off, csum ^ 0x0040)  # single-bit flip => invalid
+    return pydivert.Packet(bytes(raw), interface=pkt.interface,
+                           direction=pkt.direction)
+
+
 def tcp_fragment_and_send(w, packet, sni: str, verbose: bool = False) -> bool:
     """
     DPI bypass via SNI-midpoint fragmentation + disorder:
@@ -217,10 +244,19 @@ def tcp_fragment_and_send(w, packet, sni: str, verbose: bool = False) -> bool:
     # (malformed packet), return False so the caller forwards the original
     # untouched — never leave a connection with a half-sent burst.
     try:
-        # 1) FAKE: low TTL + spoofed SNI — reaches DPI but expires before server
+        # 1) FAKE: spoofed SNI, made UN-PROCESSABLE BY THE SERVER via a wrong
+        #    TCP checksum (the DPI ignores L4 checksums, so it is still fooled).
+        #    Previously the fake carried the real seq + valid checksums and
+        #    relied ONLY on TTL=6; for any server <=6 hops away (most CDNs,
+        #    Cloudflare, Discord edge) it was accepted as the real ClientHello,
+        #    the real fragments were discarded as duplicates, and the server did
+        #    TLS with the fake SNI -> handshake_failure/RST/hang. That poisoning
+        #    is the primary cause of the intermittent connection drops. Low TTL
+        #    is kept as a secondary defense.
         fake = _build_packet(headers, fake_payload, ip_hlen,
                              orig_seq, orig_ack,
                              iface, direction, ttl=FAKE_TTL)
+        fake = _corrupt_tcp_checksum(fake, ip_hlen)
         # 2) FRAGMENT 2 FIRST (disorder — DPI can't reassemble out-of-order)
         frag2 = _build_packet(headers, payload[split_pos:], ip_hlen,
                               orig_seq + split_pos, orig_ack,
@@ -235,8 +271,10 @@ def tcp_fragment_and_send(w, packet, sni: str, verbose: bool = False) -> bool:
     # Send phase: original was already dropped by the caller, so a transient
     # send error here can't be recovered by re-sending the original (would
     # duplicate seq). Swallow it — TCP will retransmit the real ClientHello.
+    # The fake keeps its deliberately-wrong TCP checksum (recalculate_checksum
+    # =False); the real fragments get correct checksums recomputed by WinDivert.
     try:
-        w.send(fake)
+        w.send(fake, recalculate_checksum=False)
         w.send(frag2)
         w.send(frag1)
     except Exception:

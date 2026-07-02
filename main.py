@@ -8,9 +8,9 @@ import sys
 import threading
 import ctypes
 import pydivert
-from pydivert.consts import Flag
+from pydivert.consts import Flag, Param
 from strategies import extract_sni, should_bypass_fast, tcp_fragment_and_send
-from doh import DohManager
+from doh import DohManager, restore_dns_from_journal
 from config import load_settings, get_all_domains, MODE_ALL
 from lang import t
 
@@ -56,7 +56,35 @@ class BypassEngine:
         """Reload settings (called when mode changes from GUI)."""
         self._settings = load_settings()
         self._refresh_match_cache()
+        # Keep the QUIC-drop handle in sync with the new mode: switching
+        # ALL->SELECTIVE must CLOSE the system-wide UDP/443 drop (else it keeps
+        # killing QUIC for traffic we are not bypassing), and SELECTIVE->ALL
+        # must OPEN it. Only meaningful while the engine is actually running.
+        if self.running:
+            self._sync_quic_handle()
         self._log(f"[*] Mode: {self._mode.upper()}")
+
+    def _sync_quic_handle(self):
+        """Open or close the QUIC-drop handle to match the current mode+settings."""
+        want = (self._settings.get("quic_drop_enabled", True) and
+                (self._mode == MODE_ALL or
+                 not self._settings.get("quic_drop_all_mode_only", True)))
+        if want and self._quic_drop is None:
+            try:
+                h = pydivert.WinDivert(
+                    "outbound and udp and udp.DstPort == 443",
+                    priority=999, flags=Flag.DROP)
+                h.open()
+                self._quic_drop = h
+            except Exception:
+                self._quic_drop = None
+        elif not want and self._quic_drop is not None:
+            try:
+                if self._quic_drop.is_open:
+                    self._quic_drop.close()
+            except Exception:
+                pass
+            self._quic_drop = None
 
     def start(self):
         """Run bypass loop. Call from a separate thread."""
@@ -65,44 +93,69 @@ class BypassEngine:
         self._settings = load_settings()
         self._refresh_match_cache()
 
-        # Start DoH (secure DNS)
-        if self._settings.get("doh_enabled", True):
-            provider = self._settings.get("doh_provider", "cloudflare")
-            self._doh = DohManager(provider=provider, log_callback=self._log)
-            self._doh.start()
-
-        # Kernel DROP: DPI-injected RST packets
-        # Drop all inbound RST on 443/80 — DPI injects these to kill connections
-        self._rst_drop = pydivert.WinDivert(
-            "inbound and tcp and tcp.Rst and "
-            "(tcp.SrcPort == 443 or tcp.SrcPort == 80)",
-            priority=1000, flags=Flag.DROP
-        )
-        self._rst_drop.open()
-
-        # QUIC DROP — disable HTTP/3, force TCP fallback
-        self._quic_drop = pydivert.WinDivert(
-            "outbound and udp and udp.DstPort == 443",
-            priority=999, flags=Flag.DROP
-        )
-        self._quic_drop.open()
-
-        # Main filter — exclude loopback
-        main_filter = (
-            "outbound and tcp and "
-            "(tcp.DstPort == 443 or tcp.DstPort == 80) and "
-            "tcp.PayloadLength > 0 and "
-            "ip.DstAddr != 127.0.0.1"
-        )
-
         mode = self._mode
         self.running = True
         self._log(t("engine_active"))
         self._log(f"[*] Mode: {mode.upper()}")
 
+        # Everything that alters system state is opened INSIDE the try so the
+        # finally/_cleanup path always restores it — even if a later open()
+        # raises. _cleanup() closes handles AND restores DNS.
         try:
+            # Heal any DNS left pinned by a previously crashed/killed run.
+            restore_dns_from_journal(self._log)
+
+            # Secure DNS (crash-safe; restored by _cleanup on ANY exit).
+            if self._settings.get("doh_enabled", True):
+                provider = self._settings.get("doh_provider", "cloudflare")
+                self._doh = DohManager(provider=provider, log_callback=self._log)
+                self._doh.start()
+
+            # Kernel DROP: DPI-injected RST packets. OFF by default — blanket
+            # dropping every inbound RST on 443/80 also swallows LEGITIMATE
+            # server/load-balancer resets, leaving half-open sockets that hang
+            # until TCP timeout (a cause of the intermittent stalls). Opt-in for
+            # users whose DPI relies on RST injection.
+            if self._settings.get("rst_drop_enabled", False):
+                self._rst_drop = pydivert.WinDivert(
+                    "inbound and tcp and tcp.Rst and "
+                    "(tcp.SrcPort == 443 or tcp.SrcPort == 80)",
+                    priority=1000, flags=Flag.DROP
+                )
+                self._rst_drop.open()
+                self._log("[*] RST drop: ON")
+
+            # QUIC DROP — force TCP fallback so the TLS bypass can act. Only in
+            # ALL mode by default; in selective mode a system-wide UDP/443 kill
+            # is pure collateral for the traffic we are not bypassing. Opened
+            # here and kept in sync with runtime mode changes by reload_settings.
+            self._sync_quic_handle()
+
+            # Main filter — kernel-side ClientHello selection. Only TLS
+            # handshake ClientHello packets (record type 0x16, handshake type
+            # 0x01 at payload offset 5) are diverted to userspace; every other
+            # 443 packet stays in the kernel fast-path untouched. This is the
+            # key performance/reliability fix: the userspace loop now sees a
+            # handful of packets/sec instead of every outbound data packet, so
+            # it can no longer fall behind and force silent kernel drops.
+            main_filter = (
+                "outbound and tcp and tcp.DstPort == 443 and "
+                "tcp.PayloadLength > 5 and "
+                "tcp.Payload[0] == 0x16 and tcp.Payload[5] == 0x01 and "
+                "ip.DstAddr != 127.0.0.1"
+            )
             self._main_handle = pydivert.WinDivert(main_filter)
             self._main_handle.open()
+            # Safety-net queue sizing for ClientHello bursts (a page opening
+            # dozens of TLS connections at once). Wrapped so a value the driver
+            # rejects can never crash start().
+            for _param, _value in ((Param.QUEUE_LEN, 8192),
+                                   (Param.QUEUE_TIME, 4000),
+                                   (Param.QUEUE_SIZE, 16 * 1024 * 1024)):
+                try:
+                    self._main_handle.set_param(_param, _value)
+                except Exception:
+                    pass
 
             while not self._stop_event.is_set():
                 try:
@@ -117,14 +170,21 @@ class BypassEngine:
                         self.stats["passed"] += 1
                         continue
 
-                    # TLS ClientHello check
+                    # The kernel filter already guarantees this is a ClientHello
+                    # record. extract_sni returns None if the SNI value straddles
+                    # a TCP segment boundary (multi-segment ClientHello), so we
+                    # forward that segment untouched — a partial handshake is
+                    # never split. A large modern ClientHello whose SNI IS present
+                    # in this first segment (the common post-quantum-TLS case) is
+                    # still fragmented at the SNI; trailing segments flow normally
+                    # and the server reassembles correctly.
                     if len(payload) > 5 and payload[0] == 0x16:
                         sni = extract_sni(payload)
                         if sni and should_bypass_fast(sni, self._mode, self._domain_set):
                             if tcp_fragment_and_send(self._main_handle, packet, sni, self._verbose):
                                 self.stats["bypassed"] += 1
                                 # In ALL mode, log every 50th bypass to reduce noise
-                                if mode == MODE_ALL:
+                                if self._mode == MODE_ALL:
                                     if self.stats["bypassed"] % 50 == 1:
                                         self._log(f"[BYPASS] {sni} (+{min(self.stats['bypassed'], 50)})")
                                 else:
@@ -177,12 +237,24 @@ class BypassEngine:
         self._main_handle = None
         self._rst_drop = None
         self._quic_drop = None
+        # Crash-safety: restore DNS on ANY exit from the loop (an internal
+        # exception, or the GUI daemon thread dying), not just an explicit
+        # stop(). DohManager.stop() is idempotent, so a later stop() is a no-op.
+        if self._doh and self._doh.active:
+            try:
+                self._doh.stop()
+            except Exception:
+                pass
+        self._doh = None
 
 
 if __name__ == "__main__":
     if not is_admin():
         print(t("admin_required"))
         sys.exit(1)
+
+    # Heal DNS left pinned by a previous crashed/force-killed run before starting.
+    restore_dns_from_journal()
 
     verbose = "--verbose" in sys.argv or "-v" in sys.argv
     engine = BypassEngine(verbose=verbose)

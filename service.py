@@ -54,6 +54,15 @@ def stop():
         else:
             print(f"[-] PID {pid} already stopped.")
 
+    # taskkill /f (TerminateProcess) skips the engine's own cleanup, so its DNS
+    # change is not reverted by the killed process. Restore it from the on-disk
+    # journal here so system DNS is never left pinned to the secure resolver.
+    try:
+        from doh import restore_dns_from_journal
+        restore_dns_from_journal()
+    except Exception:
+        pass
+
     try:
         os.remove(PID_FILE)
     except OSError:

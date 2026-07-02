@@ -163,23 +163,68 @@ def _default_settings():
         "enabled_categories": list(CATEGORIES.keys()),
         "doh_enabled": True,
         "doh_provider": "cloudflare",
+        # Kernel DROP knobs. RST-drop is OFF by default: fragmentation is the
+        # primary bypass and works without it, while blanket-dropping every
+        # inbound RST on 443/80 also kills LEGITIMATE server resets and leaves
+        # half-open sockets (a cause of intermittent hangs). QUIC-drop stays on
+        # but only in ALL mode — in selective mode a system-wide UDP/443 kill is
+        # pure collateral for traffic we are not bypassing.
+        "rst_drop_enabled": False,
+        "quic_drop_enabled": True,
+        "quic_drop_all_mode_only": True,
     }
 
 
+def _atomic_write_json(path: str, data) -> None:
+    """Write JSON atomically: temp file + fsync + os.replace.
+
+    A crash or force-kill mid-write can never leave a truncated/corrupt file
+    (which the loaders would otherwise silently treat as "missing" and reset
+    the user's config back to defaults).
+    """
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def _read_settings_file(path: str) -> dict:
+    """Load one settings file merged onto defaults. Raises if missing/corrupt.
+
+    Rejects valid-JSON-but-non-object content (a list/number/string) so a
+    dict.update() TypeError can never escape and crash startup.
+    """
+    with open(path, "r") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("settings file is not a JSON object")
+    merged = _default_settings()
+    merged.update(data)
+    return merged
+
+
 def load_settings() -> dict:
-    try:
-        with open(SETTINGS_FILE, "r") as f:
-            data = json.load(f)
-            defaults = _default_settings()
-            defaults.update(data)
-            return defaults
-    except Exception:
-        return _default_settings()
+    # Try the live file, then the rolling backup (covers the brief window during
+    # save where the live file has been renamed to .bak but not yet rewritten),
+    # then fall back to defaults. Any missing/corrupt/non-object file is skipped.
+    for path in (SETTINGS_FILE, SETTINGS_FILE + ".bak"):
+        try:
+            return _read_settings_file(path)
+        except (FileNotFoundError, json.JSONDecodeError, ValueError, OSError):
+            continue
+    return _default_settings()
 
 
 def save_settings(settings: dict):
-    with open(SETTINGS_FILE, "w") as f:
-        json.dump(settings, f, indent=2)
+    # Keep a rolling backup of the last known-good file, then write atomically.
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            os.replace(SETTINGS_FILE, SETTINGS_FILE + ".bak")
+    except OSError:
+        pass
+    _atomic_write_json(SETTINGS_FILE, settings)
 
 
 # === Custom Domains ===
@@ -196,8 +241,7 @@ def load_custom_domains() -> list[str]:
 
 
 def save_custom_domains(domains: list[str]):
-    with open(CUSTOM_DOMAINS_FILE, "w") as f:
-        json.dump(domains, f, indent=2)
+    _atomic_write_json(CUSTOM_DOMAINS_FILE, domains)
 
 
 def get_category_domains(enabled_categories: list[str]) -> list[str]:
