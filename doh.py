@@ -127,7 +127,12 @@ def get_target_interfaces() -> list:
     to learn the true original DNS: an empty list means the interface was on
     DHCP/automatic and must be restored to DHCP, not pinned static.
 
-    Returns: [{"name": str, "v4": [ip...], "v6": [ip...]}]
+    "has_v6" reports whether the adapter has a real IPv6 default route. We only
+    pin IPv6 DNS on such adapters — forcing an unreachable IPv6 resolver onto an
+    IPv4-only box makes Windows try IPv6 DNS first and time out on every lookup,
+    which looks like a whole-internet outage.
+
+    Returns: [{"name": str, "v4": [ip...], "v6": [ip...], "has_v6": bool}]
     """
     script = r'''
 $out = @()
@@ -136,11 +141,12 @@ Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
     $ad = $_
     $cfg = Get-NetIPConfiguration -InterfaceIndex $ad.ifIndex -ErrorAction SilentlyContinue
     $gw = $null; if ($cfg -and $cfg.IPv4DefaultGateway) { $gw = $cfg.IPv4DefaultGateway.NextHop }
+    $gw6 = $null; if ($cfg -and $cfg.IPv6DefaultGateway) { $gw6 = $cfg.IPv6DefaultGateway.NextHop }
     if ($gw) {
       $guid = $ad.InterfaceGuid
       $v4 = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$guid" -Name NameServer -ErrorAction SilentlyContinue).NameServer
       $v6 = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters\Interfaces\$guid" -Name NameServer -ErrorAction SilentlyContinue).NameServer
-      $out += [PSCustomObject]@{ name = $ad.Name; v4 = "$v4"; v6 = "$v6" }
+      $out += [PSCustomObject]@{ name = $ad.Name; v4 = "$v4"; v6 = "$v6"; has6 = [bool]$gw6 }
     }
   }
 ConvertTo-Json @($out) -Compress
@@ -160,7 +166,8 @@ ConvertTo-Json @($out) -Compress
         if name:
             result.append({"name": name,
                            "v4": _split_servers(item.get("v4")),
-                           "v6": _split_servers(item.get("v6"))})
+                           "v6": _split_servers(item.get("v6")),
+                           "has_v6": bool(item.get("has6"))})
     return result
 
 
@@ -314,7 +321,13 @@ class DohManager:
         for t in targets:
             iface = t["name"]
             ok = _set_static(iface, "ip", list(prov["v4"]))
-            _set_static(iface, "ipv6", list(prov["v6"]))
+            # Only pin IPv6 DNS where the adapter actually has an IPv6 default
+            # route. On an IPv4-only box, forcing an unreachable IPv6 resolver
+            # makes Windows query it first and time out on every lookup — the
+            # apparent "whole internet dropped" symptom. Restore still resets
+            # IPv6 to the captured original (DHCP) so nothing is left pinned.
+            if t.get("has_v6"):
+                _set_static(iface, "ipv6", list(prov["v6"]))
             if ok:
                 self._log(f"[DNS] {iface} -> {prov['v4'][0]}")
                 success = True
