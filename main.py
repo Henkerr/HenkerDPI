@@ -81,12 +81,14 @@ class BypassEngine:
                  not self._settings.get("quic_drop_all_mode_only", True)))
         if want and self._quic_drop is None:
             try:
-                # Match only long-header QUIC packets (Initial/Handshake — high
-                # bit set). 1-RTT data never appears once the Initial is refused,
-                # so the userspace refuser sees only a handful of packets.
+                # Match only long-header QUIC packets (Initial/Handshake — the
+                # Header Form bit is set, so the first byte is >= 0x80). 1-RTT
+                # data never appears once the Initial is refused, so the
+                # userspace refuser sees only a handful of packets. (WinDivert's
+                # filter language has no bitwise AND, hence the >= 0x80 form.)
                 h = pydivert.WinDivert(
                     "outbound and udp and udp.DstPort == 443 and "
-                    "udp.PayloadLength > 0 and (udp.Payload[0] & 0x80) != 0",
+                    "udp.PayloadLength > 0 and udp.Payload[0] >= 0x80",
                     priority=999)
                 h.open()
                 self._quic_drop = h
