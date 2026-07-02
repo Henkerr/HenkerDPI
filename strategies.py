@@ -6,6 +6,7 @@ General-purpose — all sites or selected domains.
 
 import struct
 import pydivert
+from pydivert.consts import Direction
 from config import get_all_domains, load_settings, MODE_ALL
 
 FAKE_TTL = 6  # Exact V1 value — proven to work
@@ -194,6 +195,41 @@ def _corrupt_tcp_checksum(pkt, ip_hlen: int):
     struct.pack_into("!H", raw, off, csum ^ 0x0040)  # single-bit flip => invalid
     return pydivert.Packet(bytes(raw), interface=pkt.interface,
                            direction=pkt.direction)
+
+
+def build_icmp_port_unreachable(pkt):
+    """Build an INBOUND ICMPv4 Type 3 Code 3 (port unreachable) for an outbound
+    UDP datagram.
+
+    Injecting this back at the local stack makes a connected UDP socket
+    (Chromium/Electron QUIC, e.g. Discord) surface ECONNREFUSED, so the app
+    abandons QUIC on the very first Initial and falls back to TCP immediately —
+    instead of stalling for tens of seconds on a silent black-hole. The original
+    datagram is not re-injected by the caller, so the QUIC SNI never leaves the
+    host. Returns a pydivert.Packet (direction=inbound), or None for anything
+    that is not IPv4/UDP. Checksums are left zero and recomputed on send.
+    """
+    raw = bytes(pkt.raw)
+    if len(raw) < 20 or (raw[0] >> 4) != 4:          # IPv4 only
+        return None
+    ip_hlen = (raw[0] & 0x0F) * 4
+    if raw[9] != 17 or len(raw) < ip_hlen + 8:       # protocol must be UDP
+        return None
+    src_ip = raw[12:16]                              # local host
+    dst_ip = raw[16:20]                              # remote server
+    quoted = raw[:ip_hlen + 8]                       # orig IP header + 8B UDP header
+    ip = bytearray(20)
+    ip[0] = 0x45
+    struct.pack_into("!H", ip, 2, 20 + 8 + len(quoted))  # IP total length
+    ip[8] = 64                                       # TTL
+    ip[9] = 1                                        # protocol = ICMP
+    ip[12:16] = dst_ip                               # ICMP src = the server
+    ip[16:20] = src_ip                               # ICMP dst = local host
+    icmp = bytearray(8)                              # type, code, checksum(0), unused(0)
+    icmp[0] = 3                                      # Destination Unreachable
+    icmp[1] = 3                                      # Port Unreachable
+    return pydivert.Packet(bytes(ip) + bytes(icmp) + quoted,
+                           interface=pkt.interface, direction=Direction.INBOUND)
 
 
 def tcp_fragment_and_send(w, packet, sni: str, verbose: bool = False) -> bool:

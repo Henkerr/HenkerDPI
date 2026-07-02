@@ -9,7 +9,8 @@ import threading
 import ctypes
 import pydivert
 from pydivert.consts import Flag, Param
-from strategies import extract_sni, should_bypass_fast, tcp_fragment_and_send
+from strategies import (extract_sni, should_bypass_fast, tcp_fragment_and_send,
+                        build_icmp_port_unreachable)
 from doh import DohManager, restore_dns_from_journal
 from config import load_settings, get_all_domains, MODE_ALL
 from lang import t
@@ -31,6 +32,7 @@ class BypassEngine:
         self._stop_event = threading.Event()
         self._rst_drop = None
         self._quic_drop = None
+        self._quic_thread = None
         self._main_handle = None
         self._doh = None
         self._settings = load_settings()
@@ -65,26 +67,78 @@ class BypassEngine:
         self._log(f"[*] Mode: {self._mode.upper()}")
 
     def _sync_quic_handle(self):
-        """Open or close the QUIC-drop handle to match the current mode+settings."""
+        """Open or close the QUIC refuser to match the current mode+settings.
+
+        We do NOT silently DROP QUIC anymore: a black-holed UDP/443 makes
+        HTTP/3-preferring apps (Chromium, Electron/Discord) wait out a long QUIC
+        timeout before falling back to TCP — the ~1-minute Discord-reconnect
+        symptom. Instead we intercept only the QUIC Initial (long-header) and
+        answer it locally with an ICMP port-unreachable, so the client abandons
+        QUIC at once and switches to the TCP path our fragmentation bypasses.
+        """
         want = (self._settings.get("quic_drop_enabled", True) and
                 (self._mode == MODE_ALL or
                  not self._settings.get("quic_drop_all_mode_only", True)))
         if want and self._quic_drop is None:
             try:
+                # Match only long-header QUIC packets (Initial/Handshake — high
+                # bit set). 1-RTT data never appears once the Initial is refused,
+                # so the userspace refuser sees only a handful of packets.
                 h = pydivert.WinDivert(
-                    "outbound and udp and udp.DstPort == 443",
-                    priority=999, flags=Flag.DROP)
+                    "outbound and udp and udp.DstPort == 443 and "
+                    "udp.PayloadLength > 0 and (udp.Payload[0] & 0x80) != 0",
+                    priority=999)
                 h.open()
                 self._quic_drop = h
+                self._quic_thread = threading.Thread(
+                    target=self._quic_refuse_loop, args=(h,), daemon=True)
+                self._quic_thread.start()
             except Exception:
                 self._quic_drop = None
+                self._quic_thread = None
         elif not want and self._quic_drop is not None:
+            self._close_quic_handle()
+
+    def _close_quic_handle(self):
+        """Close the QUIC handle (unblocks recv → the refuser thread exits)."""
+        h = self._quic_drop
+        self._quic_drop = None
+        if h is not None:
             try:
-                if self._quic_drop.is_open:
-                    self._quic_drop.close()
+                if h.is_open:
+                    h.close()
             except Exception:
                 pass
-            self._quic_drop = None
+        th = self._quic_thread
+        self._quic_thread = None
+        if th is not None and th is not threading.current_thread():
+            th.join(timeout=2)
+
+    def _quic_refuse_loop(self, handle):
+        """Answer each outbound QUIC Initial with a local ICMP port-unreachable.
+
+        The original datagram is not re-injected, so QUIC never leaves the host
+        (its SNI is not exposed) and the client falls straight back to TCP.
+        Non-IPv4/UDP packets are forwarded untouched; on any error we forward
+        rather than black-hole.
+        """
+        while True:
+            try:
+                pkt = handle.recv()
+            except Exception:
+                break  # handle closed
+            try:
+                icmp = build_icmp_port_unreachable(pkt)
+                if icmp is not None:
+                    handle.send(icmp)   # inbound → local socket sees ECONNREFUSED
+                    # original NOT re-sent → QUIC Initial is dropped
+                else:
+                    handle.send(pkt)    # not IPv4/UDP → forward untouched
+            except Exception:
+                try:
+                    handle.send(pkt)
+                except Exception:
+                    pass
 
     def start(self):
         """Run bypass loop. Call from a separate thread."""
@@ -227,7 +281,9 @@ class BypassEngine:
                 pass
 
     def _cleanup(self):
-        for handle in (self._main_handle, self._rst_drop, self._quic_drop):
+        # Close the QUIC refuser first so its worker thread is stopped/joined.
+        self._close_quic_handle()
+        for handle in (self._main_handle, self._rst_drop):
             if handle:
                 try:
                     if handle.is_open:
@@ -236,7 +292,6 @@ class BypassEngine:
                     pass
         self._main_handle = None
         self._rst_drop = None
-        self._quic_drop = None
         # Crash-safety: restore DNS on ANY exit from the loop (an internal
         # exception, or the GUI daemon thread dying), not just an explicit
         # stop(). DohManager.stop() is idempotent, so a later stop() is a no-op.
