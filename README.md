@@ -30,17 +30,21 @@ HenkerDPI works at the packet level — it manipulates TLS handshake packets to 
 
 ## How It Works
 
-HenkerDPI uses a three-layer bypass strategy:
+HenkerDPI uses a layered bypass strategy:
 
-1. **TTL-based Fake Packet** — Sends a decoy packet with a spoofed SNI and low TTL (3 hops). The DPI system sees the fake domain, but the packet expires before reaching the actual server.
+1. **Fake ClientHello Decoy** — Sends a decoy packet carrying a spoofed SNI, a deliberately invalid TCP checksum, and a low TTL. The DPI records the fake domain, but the real server drops the decoy (bad checksum / expired TTL) so it never poisons your actual handshake.
 
 2. **TCP Fragmentation + Disorder** — Splits the real TLS ClientHello at the midpoint of the SNI hostname and sends the fragments out of order. DPI systems can't reassemble out-of-order packets.
 
-3. **RST Injection Protection** — Drops DPI-injected RST packets at the kernel level using WinDivert, preventing connection resets.
+3. **RST Injection Protection** *(optional, off by default)* — A toggle that drops inbound RST packets on 443/80 at the kernel level using WinDivert. Left off by default so legitimate connection resets are never swallowed; enable it only if your ISP injects RSTs.
 
 Additionally:
-- **QUIC Blocking** — Forces browsers to use TCP instead of UDP/QUIC, ensuring the bypass strategy can intercept the handshake
-- **Secure DNS** — Redirects DNS queries to encrypted resolvers (1.1.1.1 / 8.8.8.8 / 9.9.9.9) to prevent DNS-level censorship
+- **QUIC Fast-Fallback** — Instead of silently black-holing UDP/QUIC, HenkerDPI answers each QUIC attempt with a locally injected ICMP *port-unreachable*, so the browser falls back to TCP instantly (no timeout wait) without leaking the SNI over UDP.
+- **Secure DNS (crash-safe)** — Redirects DNS to encrypted resolvers (1.1.1.1 / 8.8.8.8 / 9.9.9.9). Your original DNS is journaled to disk before any change and restored on the next launch even after a force-kill or crash. IPv6 DNS is only pinned on adapters that actually have IPv6 connectivity.
+
+## Known Limitations
+
+- **IPv6 traffic is not yet bypassed.** The engine currently operates on IPv4 only. On a dual-stack network, a site reachable over IPv6 may connect without the bypass being applied. If a blocked site opens inconsistently, forcing the IPv4 route (or disabling IPv6 on the adapter) ensures the bypass takes effect. IPv6 support is planned for a future release.
 
 ## Installation
 

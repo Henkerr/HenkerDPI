@@ -5,7 +5,6 @@ build/
 dist/
 build_new/
 dist_new/
-*.spec
 *.egg-info/
 .env
 *.pid

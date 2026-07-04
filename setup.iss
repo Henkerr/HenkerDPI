@@ -4,7 +4,7 @@
 [Setup]
 AppId={{A8F4E3B2-5D6C-4B9A-8E2F-3D7E9F1B4C6A}
 AppName=HenkerDPI V2
-AppVersion=2.0.0
+AppVersion=2.1.0
 AppPublisher=Henkerr
 AppPublisherURL=https://github.com/Henkerr
 DefaultDirName={autopf}\HenkerDPI_V2

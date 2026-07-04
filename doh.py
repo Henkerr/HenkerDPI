@@ -261,16 +261,22 @@ def restore_dns_from_journal(log=print) -> bool:
         return False  # a live owner will restore on its own stop
 
     ok_any = False
+    ok_all = True
     for iface, orig in interfaces.items():
         v4 = orig.get("v4") if isinstance(orig, dict) else orig
         v6 = orig.get("v6") if isinstance(orig, dict) else []
         r4 = _set_static(iface, "ip", v4) if v4 else _set_dhcp(iface, "ip")
         r6 = _set_static(iface, "ipv6", v6) if v6 else _set_dhcp(iface, "ipv6")
-        if r4 or r6:
+        if r4:
             ok_any = True
             log(f"[DNS] {iface} -> restored")
+        else:
+            # v4 DNS is the family that can black-hole all resolution; if it did
+            # not verifiably revert, keep the journal so a later launch retries
+            # rather than deleting the only record of a still-pinned adapter.
+            ok_all = False
     _flush_dns()
-    if ok_any or not interfaces:
+    if ok_all:
         _clear_journal()
     return ok_any
 
@@ -341,27 +347,40 @@ class DohManager:
         return success
 
     def stop(self):
-        """Restore original DNS. Idempotent — safe to call twice (stop + atexit)."""
+        """Restore original DNS. Idempotent — safe to call twice (stop + atexit).
+
+        Only forget the backup (self._original + on-disk journal) once every
+        interface's v4 DNS verifiably reverted. If a netsh restore fails
+        (adapter transiently down/renamed, netsh timeout), KEEP both so a later
+        stop()/atexit call or the next launch's restore_dns_from_journal can
+        retry — deleting the only recovery record here is what could otherwise
+        leave DNS pinned to the public resolver with no way back.
+        """
         if not self._original:
             self._active = False
             return
+        ok_all = True
         for iface, orig in self._original.items():
             v4 = orig.get("v4", [])
             v6 = orig.get("v6", [])
-            if v4:
-                _set_static(iface, "ip", v4)
-            else:
-                _set_dhcp(iface, "ip")
+            r4 = _set_static(iface, "ip", v4) if v4 else _set_dhcp(iface, "ip")
             if v6:
                 _set_static(iface, "ipv6", v6)
             else:
                 _set_dhcp(iface, "ipv6")
-            self._log(f"[DNS] {iface} -> original")
+            if r4:
+                self._log(f"[DNS] {iface} -> original")
+            else:
+                ok_all = False
+                self._log(f"[!] DNS restore failed, will retry: {iface}")
         _flush_dns()
-        self._original = {}
         self._active = False
-        _clear_journal()
-        self._log("[DNS] DNS restored to original settings")
+        if ok_all:
+            self._original = {}
+            _clear_journal()
+            self._log("[DNS] DNS restored to original settings")
+        else:
+            self._log("[!] DNS restore incomplete — backup kept for retry")
 
     def set_provider(self, provider: str):
         """Change provider. Restarts if currently active."""

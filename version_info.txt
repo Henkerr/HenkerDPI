@@ -1,0 +1,31 @@
+# PyInstaller version resource for HenkerDPI_V2.exe
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(2, 1, 0, 0),
+    prodvers=(2, 1, 0, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0),
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        '040904B0',
+        [
+          StringStruct('CompanyName', 'Henkerr'),
+          StringStruct('FileDescription', 'HenkerDPI V2 - DPI Bypass'),
+          StringStruct('FileVersion', '2.1.0.0'),
+          StringStruct('InternalName', 'HenkerDPI_V2'),
+          StringStruct('LegalCopyright', 'MIT License'),
+          StringStruct('OriginalFilename', 'HenkerDPI_V2.exe'),
+          StringStruct('ProductName', 'HenkerDPI V2'),
+          StringStruct('ProductVersion', '2.1.0.0'),
+        ],
+      )
+    ]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])]),
+  ],
+)
