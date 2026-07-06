@@ -164,17 +164,31 @@ def should_bypass_fast(sni: str | None, mode: str, domain_set: set) -> bool:
     return domain_matches(sni, domain_set)
 
 
-def _build_packet(headers: bytes, payload_data: bytes, ip_hlen: int,
-                  seq: int, ack: int, interface, direction, ttl: int = 0):
-    """Build a standalone TCP packet. ttl=0 keeps original TTL."""
+def _build_packet(headers: bytes, payload_data: bytes, l4_off: int,
+                  seq: int, ack: int, interface, direction, ttl: int = 0,
+                  ver: int = 4):
+    """Build a standalone TCP packet. ttl=0 keeps the original TTL/hop-limit.
+
+    l4_off is the byte offset where the TCP header starts (IPv4 IHL, or 40+ for
+    IPv6). The IP-layer writes differ by version: IPv4 has a 16-bit total-length
+    at offset 2, TTL at byte 8 and a header checksum at offset 10; IPv6 has a
+    16-bit payload-length at offset 4, hop-limit at byte 7 and NO header
+    checksum. The TCP seq/ack/checksum offsets are identical for both.
+    """
     raw = bytearray(headers) + bytearray(payload_data)
-    struct.pack_into("!H", raw, 2, len(raw))  # IP total length
-    struct.pack_into("!I", raw, ip_hlen + 4, seq & 0xFFFFFFFF)  # TCP seq
-    struct.pack_into("!I", raw, ip_hlen + 8, ack & 0xFFFFFFFF)  # TCP ack
-    if ttl > 0:
-        raw[8] = ttl  # IP TTL
-    struct.pack_into("!H", raw, 10, 0)  # IP checksum -> 0
-    struct.pack_into("!H", raw, ip_hlen + 16, 0)  # TCP checksum -> 0
+    struct.pack_into("!I", raw, l4_off + 4, seq & 0xFFFFFFFF)  # TCP seq
+    struct.pack_into("!I", raw, l4_off + 8, ack & 0xFFFFFFFF)  # TCP ack
+    struct.pack_into("!H", raw, l4_off + 16, 0)  # TCP checksum -> 0
+    if ver == 6:
+        struct.pack_into("!H", raw, 4, len(raw) - 40)  # IPv6 payload length
+        if ttl > 0:
+            raw[7] = ttl  # IPv6 hop limit
+        # IPv6 base header carries no checksum
+    else:
+        struct.pack_into("!H", raw, 2, len(raw))  # IPv4 total length
+        if ttl > 0:
+            raw[8] = ttl  # IPv4 TTL
+        struct.pack_into("!H", raw, 10, 0)  # IPv4 header checksum -> 0
     return pydivert.Packet(raw, interface=interface, direction=direction)
 
 
@@ -232,6 +246,40 @@ def build_icmp_port_unreachable(pkt):
                            interface=pkt.interface, direction=Direction.INBOUND)
 
 
+def build_icmpv6_port_unreachable(pkt):
+    """IPv6 analogue of build_icmp_port_unreachable.
+
+    Builds an INBOUND ICMPv6 Type 1 Code 4 (Destination Unreachable / Port
+    Unreachable) for an outbound IPv6/UDP QUIC Initial, so the local QUIC socket
+    sees ECONNREFUSED and falls straight back to TCP instead of stalling on a
+    silent black-hole. Returns a pydivert.Packet (inbound) or None for anything
+    that is not plain IPv6/UDP (extension headers unsupported). The ICMPv6
+    checksum is left zero and filled by WinDivert on send.
+    """
+    raw = bytes(pkt.raw)
+    if len(raw) < 48 or (raw[0] >> 4) != 6:          # IPv6 base header + 8B UDP
+        return None
+    if raw[6] != 17:                                 # Next Header must be UDP (no ext hdrs)
+        return None
+    src_ip = raw[8:24]                               # local host
+    dst_ip = raw[24:40]                              # remote server
+    # Quote the invoking datagram, capped so the whole ICMPv6 error stays within
+    # the 1280-byte IPv6 minimum MTU: 40 (IPv6) + 8 (ICMPv6) + quoted.
+    quoted = raw[:1280 - 40 - 8]
+    ip = bytearray(40)
+    ip[0] = 0x60                                     # version 6
+    struct.pack_into("!H", ip, 4, 8 + len(quoted))   # payload length (ICMPv6 hdr + quoted)
+    ip[6] = 58                                       # Next Header = ICMPv6
+    ip[7] = 64                                       # hop limit
+    ip[8:24] = dst_ip                                # ICMPv6 src = the server
+    ip[24:40] = src_ip                               # ICMPv6 dst = local host
+    icmp = bytearray(8)                              # type, code, checksum(0), unused(0)
+    icmp[0] = 1                                      # Destination Unreachable
+    icmp[1] = 4                                      # Port Unreachable
+    return pydivert.Packet(bytes(ip) + bytes(icmp) + quoted,
+                           interface=pkt.interface, direction=Direction.INBOUND)
+
+
 def tcp_fragment_and_send(w, packet, sni: str, verbose: bool = False) -> bool:
     """
     DPI bypass via SNI-midpoint fragmentation + disorder:
@@ -245,12 +293,24 @@ def tcp_fragment_and_send(w, packet, sni: str, verbose: bool = False) -> bool:
         return False
 
     orig_raw = bytes(packet.raw)
-    ip_hlen = (orig_raw[0] & 0x0F) * 4
-    tcp_hlen = ((orig_raw[ip_hlen + 12] >> 4) & 0xF) * 4
-    headers = orig_raw[:ip_hlen + tcp_hlen]
+    ver = orig_raw[0] >> 4
+    # L4 start offset. pydivert.protocol[1] is the TCP header start walking any
+    # IPv6 extension headers; fall back to the fixed sizes if it's unavailable.
+    try:
+        _pstart = packet.protocol[1]
+    except Exception:
+        _pstart = None
+    if ver == 4:
+        l4_off = _pstart if _pstart else (orig_raw[0] & 0x0F) * 4
+    elif ver == 6:
+        l4_off = _pstart if _pstart else 40
+    else:
+        return False
+    tcp_hlen = ((orig_raw[l4_off + 12] >> 4) & 0xF) * 4
+    headers = orig_raw[:l4_off + tcp_hlen]
 
-    orig_seq = struct.unpack_from("!I", orig_raw, ip_hlen + 4)[0]
-    orig_ack = struct.unpack_from("!I", orig_raw, ip_hlen + 8)[0]
+    orig_seq = struct.unpack_from("!I", orig_raw, l4_off + 4)[0]
+    orig_ack = struct.unpack_from("!I", orig_raw, l4_off + 8)[0]
 
     iface = packet.interface
     direction = packet.direction
@@ -289,18 +349,18 @@ def tcp_fragment_and_send(w, packet, sni: str, verbose: bool = False) -> bool:
         #    TLS with the fake SNI -> handshake_failure/RST/hang. That poisoning
         #    is the primary cause of the intermittent connection drops. Low TTL
         #    is kept as a secondary defense.
-        fake = _build_packet(headers, fake_payload, ip_hlen,
+        fake = _build_packet(headers, fake_payload, l4_off,
                              orig_seq, orig_ack,
-                             iface, direction, ttl=FAKE_TTL)
-        fake = _corrupt_tcp_checksum(fake, ip_hlen)
+                             iface, direction, ttl=FAKE_TTL, ver=ver)
+        fake = _corrupt_tcp_checksum(fake, l4_off)
         # 2) FRAGMENT 2 FIRST (disorder — DPI can't reassemble out-of-order)
-        frag2 = _build_packet(headers, payload[split_pos:], ip_hlen,
+        frag2 = _build_packet(headers, payload[split_pos:], l4_off,
                               orig_seq + split_pos, orig_ack,
-                              iface, direction)
+                              iface, direction, ver=ver)
         # 3) FRAGMENT 1 (contains first half of real SNI)
-        frag1 = _build_packet(headers, payload[:split_pos], ip_hlen,
+        frag1 = _build_packet(headers, payload[:split_pos], l4_off,
                               orig_seq, orig_ack,
-                              iface, direction)
+                              iface, direction, ver=ver)
     except (IndexError, struct.error):
         return False
 

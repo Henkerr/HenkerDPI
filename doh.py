@@ -15,6 +15,7 @@ import os
 import sys
 import json
 import atexit
+import socket
 import subprocess
 import ctypes
 
@@ -58,6 +59,48 @@ def _pid_alive(pid) -> bool:
         return bool(ok) and code.value == STILL_ACTIVE
     finally:
         k.CloseHandle(h)
+
+
+def _pid_image_name(pid):
+    """Lowercase basename of the exe backing a live PID, or None.
+
+    Makes journal ownership identity-safe: a bare PID can be reused by an
+    unrelated process after a crash, so we confirm the live PID is really our
+    program before treating it as a sibling that will restore DNS on its own.
+    """
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if pid <= 0:
+        return None
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    k = ctypes.windll.kernel32
+    h = k.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not h:
+        return None
+    try:
+        buf = ctypes.create_unicode_buffer(32768)
+        size = ctypes.c_ulong(32768)
+        if not k.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+            return None
+        return os.path.basename(buf.value).lower()
+    finally:
+        k.CloseHandle(h)
+
+
+def _reachable(ip: str, port: int = 53, timeout: float = 1.0) -> bool:
+    """Quick TCP connect probe to a resolver IP (no DNS lookup involved).
+
+    Pinning DNS to an UNREACHABLE resolver is a self-inflicted whole-internet
+    outage, so start() probes before pinning. Port 53 (DNS over TCP) is answered
+    by every bundled provider and is the truest reachability signal.
+    """
+    try:
+        with socket.create_connection((ip, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def _state_dir() -> str:
@@ -209,7 +252,9 @@ def _flush_dns() -> None:
 
 def _write_journal(interfaces: dict) -> None:
     tmp = _JOURNAL_FILE + ".tmp"
-    payload = {"pid": os.getpid(), "interfaces": interfaces}
+    payload = {"pid": os.getpid(),
+               "exe": os.path.basename(sys.executable).lower(),
+               "interfaces": interfaces}
     try:
         with open(tmp, "w") as f:
             json.dump(payload, f)
@@ -252,13 +297,22 @@ def restore_dns_from_journal(log=print) -> bool:
         return False
     if isinstance(data, dict) and "interfaces" in data:
         owner = data.get("pid")
+        owner_exe = data.get("exe")  # None for journals from older builds
         interfaces = data.get("interfaces") or {}
     else:  # legacy flat {iface: {...}} journal
         owner = None
+        owner_exe = None
         interfaces = data if isinstance(data, dict) else {}
 
     if owner and owner != os.getpid() and _pid_alive(owner):
-        return False  # a live owner will restore on its own stop
+        # A live owner would restore on its own stop() — but a crash can leave a
+        # dead owner whose PID Windows has since reused for an UNRELATED process.
+        # Only defer to the live PID when we can confirm it is really our program
+        # (matching image name); otherwise treat the owner as dead and restore,
+        # so a reused PID can never block recovery and leave DNS pinned.
+        live_exe = _pid_image_name(owner)
+        if not owner_exe or not live_exe or live_exe == owner_exe:
+            return False
 
     ok_any = False
     ok_all = True
@@ -270,10 +324,11 @@ def restore_dns_from_journal(log=print) -> bool:
         if r4:
             ok_any = True
             log(f"[DNS] {iface} -> restored")
-        else:
-            # v4 DNS is the family that can black-hole all resolution; if it did
-            # not verifiably revert, keep the journal so a later launch retries
-            # rather than deleting the only record of a still-pinned adapter.
+        if not (r4 and r6):
+            # Keep the journal if EITHER family failed to revert. v4 can
+            # black-hole all resolution; a v6 resolver left pinned is harmless
+            # while v6 is up but stalls every lookup if v6 connectivity later
+            # drops — and then this journal is the only thing that can heal it.
             ok_all = False
     _flush_dns()
     if ok_all:
@@ -285,7 +340,7 @@ class DohManager:
     """Redirects system DNS to a secure resolver, crash-safely."""
 
     def __init__(self, provider: str = "cloudflare", log_callback=None):
-        self._provider = provider
+        self._provider = (provider or "cloudflare").strip().lower()
         self._log = log_callback or print
         self._original = {}       # {iface: {"v4": [...], "v6": [...]}}
         self._active = False
@@ -296,6 +351,7 @@ class DohManager:
         return self._active
 
     def start(self) -> bool:
+        self._provider = (self._provider or "").strip().lower()
         if self._provider not in PROVIDERS:
             self._log(f"[!] Unknown DNS provider: {self._provider}")
             return False
@@ -303,6 +359,27 @@ class DohManager:
         # Heal any DNS left pinned by a previously crashed/killed run BEFORE we
         # capture originals — so we never record 1.1.1.1 as the "original".
         restore_dns_from_journal(self._log)
+
+        # If that restore did NOT verifiably clear the journal, a prior override
+        # is still in effect. Re-capturing "originals" now could record the
+        # public resolver as the original and pin it permanently — the one
+        # failure the journal exists to prevent. Bail: DNS stays exactly as-is.
+        if os.path.exists(_JOURNAL_FILE):
+            self._log("[!] Prior DNS override not verifiably reverted; skipping DNS change")
+            return False
+
+        # Reachability + cross-provider failover: pinning an unreachable resolver
+        # is a self-inflicted outage. Probe the chosen provider; if the ISP
+        # blocks/throttles it, fall back to another. If NONE is reachable, do not
+        # pin at all — leave DNS untouched.
+        order = [self._provider] + [k for k in PROVIDERS if k != self._provider]
+        chosen = next((k for k in order if _reachable(PROVIDERS[k]["v4"][0])), None)
+        if chosen is None:
+            self._log("[!] No DNS resolver reachable; leaving DNS unchanged")
+            return False
+        if chosen != self._provider:
+            self._log(f"[DNS] {self._provider.title()} unreachable; falling back to {chosen.title()}")
+            self._provider = chosen
 
         prov = PROVIDERS[self._provider]
         targets = get_target_interfaces()
@@ -364,15 +441,12 @@ class DohManager:
             v4 = orig.get("v4", [])
             v6 = orig.get("v6", [])
             r4 = _set_static(iface, "ip", v4) if v4 else _set_dhcp(iface, "ip")
-            if v6:
-                _set_static(iface, "ipv6", v6)
-            else:
-                _set_dhcp(iface, "ipv6")
+            r6 = _set_static(iface, "ipv6", v6) if v6 else _set_dhcp(iface, "ipv6")
             if r4:
                 self._log(f"[DNS] {iface} -> original")
-            else:
+            if not (r4 and r6):
                 ok_all = False
-                self._log(f"[!] DNS restore failed, will retry: {iface}")
+                self._log(f"[!] DNS restore incomplete, will retry: {iface}")
         _flush_dns()
         self._active = False
         if ok_all:
@@ -387,6 +461,6 @@ class DohManager:
         was_active = self._active
         if was_active:
             self.stop()
-        self._provider = provider
+        self._provider = (provider or "").strip().lower()
         if was_active:
             self.start()

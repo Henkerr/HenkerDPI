@@ -172,6 +172,12 @@ def _default_settings():
         "rst_drop_enabled": False,
         "quic_drop_enabled": True,
         "quic_drop_all_mode_only": True,
+        # EXPERIMENTAL, default OFF. When True the engine also diverts IPv6
+        # TCP/443 ClientHellos and refuses IPv6 QUIC so DPI is bypassed on
+        # dual-stack sites too. Off by default because the IPv4 path is the
+        # proven, drop-free one; enable only if IPv6-reachable sites open
+        # inconsistently. Toggle by editing settings.json (no GUI switch).
+        "ipv6_bypass_enabled": False,
     }
 
 

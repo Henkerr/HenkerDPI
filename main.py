@@ -10,7 +10,8 @@ import ctypes
 import pydivert
 from pydivert.consts import Flag, Param
 from strategies import (extract_sni, should_bypass_fast, tcp_fragment_and_send,
-                        build_icmp_port_unreachable)
+                        build_icmp_port_unreachable,
+                        build_icmpv6_port_unreachable)
 from doh import DohManager, restore_dns_from_journal
 from config import load_settings, get_all_domains, MODE_ALL
 from lang import t
@@ -124,18 +125,28 @@ class BypassEngine:
         Non-IPv4/UDP packets are forwarded untouched; on any error we forward
         rather than black-hole.
         """
+        # IPv6 QUIC is only refused when the experimental IPv6 bypass is on;
+        # captured once so the default (IPv4-only) path stays byte-for-byte
+        # identical to before.
+        ipv6_on = self._settings.get("ipv6_bypass_enabled", False)
         while True:
             try:
                 pkt = handle.recv()
             except Exception:
                 break  # handle closed
             try:
-                icmp = build_icmp_port_unreachable(pkt)
+                ver = pkt.raw[0] >> 4
+                if ver == 4:
+                    icmp = build_icmp_port_unreachable(pkt)
+                elif ver == 6 and ipv6_on:
+                    icmp = build_icmpv6_port_unreachable(pkt)
+                else:
+                    icmp = None
                 if icmp is not None:
                     handle.send(icmp)   # inbound → local socket sees ECONNREFUSED
                     # original NOT re-sent → QUIC Initial is dropped
                 else:
-                    handle.send(pkt)    # not IPv4/UDP → forward untouched
+                    handle.send(pkt)    # forwarded untouched
             except Exception:
                 try:
                     handle.send(pkt)
@@ -194,11 +205,21 @@ class BypassEngine:
             # key performance/reliability fix: the userspace loop now sees a
             # handful of packets/sec instead of every outbound data packet, so
             # it can no longer fall behind and force silent kernel drops.
+            # Locality clause. Default is the proven IPv4-only path. With the
+            # experimental IPv6 bypass enabled we ALSO divert IPv6 ClientHellos;
+            # the field is `ipv6.DstAddr` (NOT `ip6.DstAddr`, which the WinDivert
+            # compiler rejects with ERROR_INVALID_PARAMETER and would abort the
+            # handle open, killing engine start).
+            if self._settings.get("ipv6_bypass_enabled", False):
+                loc = ("((ip and ip.DstAddr != 127.0.0.1) or "
+                       "(ipv6 and ipv6.DstAddr != ::1))")
+            else:
+                loc = "ip.DstAddr != 127.0.0.1"
             main_filter = (
                 "outbound and tcp and tcp.DstPort == 443 and "
                 "tcp.PayloadLength > 5 and "
                 "tcp.Payload[0] == 0x16 and tcp.Payload[5] == 0x01 and "
-                "ip.DstAddr != 127.0.0.1"
+                + loc
             )
             self._main_handle = pydivert.WinDivert(main_filter)
             self._main_handle.open()
@@ -309,6 +330,14 @@ if __name__ == "__main__":
     if not is_admin():
         print(t("admin_required"))
         sys.exit(1)
+
+    # Single-instance guard sharing the GUI's machine-wide mutex name, so a
+    # standalone `python main.py` engine cannot run alongside the GUI's engine
+    # and race the shared DNS journal. Global\ also blocks another user session.
+    _mx = ctypes.windll.kernel32.CreateMutexW(None, True, "Global\\HenkerDPI_V2_SingleInstance")
+    if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        print("HenkerDPI V2 is already running.")
+        sys.exit(0)
 
     # Heal DNS left pinned by a previous crashed/force-killed run before starting.
     restore_dns_from_journal()

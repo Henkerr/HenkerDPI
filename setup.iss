@@ -4,7 +4,7 @@
 [Setup]
 AppId={{A8F4E3B2-5D6C-4B9A-8E2F-3D7E9F1B4C6A}
 AppName=HenkerDPI V2
-AppVersion=2.1.0
+AppVersion=2.2.0
 AppPublisher=Henkerr
 AppPublisherURL=https://github.com/Henkerr
 DefaultDirName={autopf}\HenkerDPI_V2
@@ -29,7 +29,6 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Create desktop shortcut"; GroupDescription: "Shortcuts:"
 Name: "startmenu"; Description: "Add to Start menu"; GroupDescription: "Shortcuts:"
-Name: "autostart"; Description: "Start automatically on Windows boot"; GroupDescription: "Other:"; Flags: unchecked
 
 [Files]
 Source: "dist\HenkerDPI_V2.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -48,9 +47,10 @@ Name: "{commondesktop}\HenkerDPI V2"; Filename: "{app}\HenkerDPI_V2.exe"; IconFi
 ; Kurulumdan sonra çalıştır
 Filename: "{app}\HenkerDPI_V2.exe"; Description: "Launch HenkerDPI V2"; Flags: nowait postinstall skipifsilent runascurrentuser
 
-[Registry]
-; Auto-start (seçiliyse)
-Root: HKLM; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "HenkerDPI_V2"; ValueData: """{app}\HenkerDPI_V2.exe"""; Flags: uninsdeletevalue; Tasks: autostart
+; Autostart is intentionally NOT wired here. The exe requires administrator,
+; and a plain HKLM..\Run value does not auto-elevate (it either nags with UAC
+; every logon or is silently skipped). Autostart is owned solely by the in-app
+; toggle, which registers an elevated, silent, drop-to-tray Scheduled Task.
 
 [UninstallDelete]
 Type: files; Name: "{app}\henkerdpi_v2.pid"

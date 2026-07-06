@@ -1,6 +1,6 @@
 """
 HenkerDPI V2 - Modern GUI
-Features: Mode selector (All/Selective), category toggles, DoH switch, 5 themes
+Features: Mode selector (All/Selective), category toggles, Secure DNS switch, 4 themes
 """
 
 import customtkinter as ctk
@@ -39,6 +39,14 @@ ctk.set_appearance_mode("dark")
 
 SERVICE_NAME = "HenkerDPI_V2"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# Writable dir for user prefs. SCRIPT_DIR is the read-only _MEIxxxx temp dir in
+# a frozen onefile build (it also holds the bundled icons), so theme/lang prefs
+# must live next to the exe like config.py's settings.json — otherwise they
+# reset to defaults on every launch.
+if getattr(sys, "frozen", False):
+    _APP_DIR = os.path.dirname(sys.executable)
+else:
+    _APP_DIR = SCRIPT_DIR
 FONT = "Helvetica"
 
 GREEN = "#4ade80"
@@ -109,7 +117,7 @@ THEMES = {
 }
 
 DEFAULT_THEME = "graphite"
-THEME_FILE = os.path.join(SCRIPT_DIR, "theme_pref.json")
+THEME_FILE = os.path.join(_APP_DIR, "theme_pref.json")
 
 NUM_HOVER_FRAMES = 4
 HOVER_ANIM_MS = 60
@@ -644,7 +652,7 @@ class HenkerDPIApp(ctk.CTk):
             progress_color=th["accent"], button_color=th["fg3"],
             button_hover_color=th["fg2"])
         self._auto_switch.pack(side="left")
-        self._version_label = ctk.CTkLabel(bottom, text="v2.1",
+        self._version_label = ctk.CTkLabel(bottom, text="v2.2",
                      font=ctk.CTkFont(FONT, 9), text_color=th["fg3"])
         self._version_label.pack(side="right")
 
@@ -1197,7 +1205,10 @@ class HenkerDPIApp(ctk.CTk):
 def main():
     import ctypes as ct
 
-    mutex = ct.windll.kernel32.CreateMutexW(None, True, "HenkerDPI_V2_SingleInstance")
+    # Global\ so the guard also blocks a second ELEVATED instance in another
+    # user session (Fast User Switching) — both would otherwise race the same
+    # machine-wide DNS journal. Admin token carries SeCreateGlobalPrivilege.
+    mutex = ct.windll.kernel32.CreateMutexW(None, True, "Global\\HenkerDPI_V2_SingleInstance")
     if ct.windll.kernel32.GetLastError() == 183:
         messagebox.showinfo("HenkerDPI V2", t("already_running"))
         sys.exit(0)

@@ -1,0 +1,8 @@
+# Build-time toolchain for producing dist/HenkerDPI_V2.exe, pinned to the
+# validated versions. pyinstaller-hooks-contrib ships hook-pydivert.py, which is
+# what actually bundles WinDivert64.dll/.sys into the onefile exe — without it a
+# build silently produces an exe missing the kernel driver that won't run.
+#
+# Install both before building:  pip install -r requirements.txt -r requirements-build.txt
+pyinstaller==6.19.0
+pyinstaller-hooks-contrib==2026.4

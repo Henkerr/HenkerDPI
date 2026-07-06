@@ -1,12 +1,20 @@
 """
 HenkerDPI V2 - Language Support
-9 languages. General-purpose DPI bypass.
+8 languages. General-purpose DPI bypass.
 """
 
 import json
 import os
+import sys
 
-LANG_DIR = os.path.dirname(os.path.abspath(__file__))
+# PyInstaller onefile: __file__ resolves inside the ephemeral _MEIxxxx temp dir
+# that Windows deletes on process exit, so the preference must be written next
+# to the exe (mirroring config.py) — otherwise the UI language silently resets
+# to English on every launch of the frozen build.
+if getattr(sys, "frozen", False):
+    LANG_DIR = os.path.dirname(sys.executable)
+else:
+    LANG_DIR = os.path.dirname(os.path.abspath(__file__))
 LANG_FILE = os.path.join(LANG_DIR, "lang_pref.json")
 
 LANGUAGES = {

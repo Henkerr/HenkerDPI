@@ -1,4 +1,8 @@
-pydivert>=2.1.0
-customtkinter>=5.2.0
-Pillow>=10.0.0
-pystray>=0.19.0
+# Runtime dependencies, pinned to the exact versions the v2.2.0 release was
+# validated against. pydivert 3.1.0 bundles WinDivert 2.2.2 — the packet-driver
+# layer the reliability-critical filter/fragmentation/QUIC code is tuned for, so
+# it must not float. Build tooling is in requirements-build.txt.
+pydivert==3.1.0
+customtkinter==5.2.2
+Pillow==12.2.0
+pystray==0.19.5

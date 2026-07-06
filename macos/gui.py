@@ -619,7 +619,7 @@ class HenkerDPIApp(ctk.CTk):
             progress_color=th["accent"], button_color=th["fg3"],
             button_hover_color=th["fg2"])
         self._auto_switch.pack(side="left")
-        self._version_label = ctk.CTkLabel(bottom, text="v2.0-mac",
+        self._version_label = ctk.CTkLabel(bottom, text="v2.2-mac",
                      font=ctk.CTkFont(FONT, 9), text_color=th["fg3"])
         self._version_label.pack(side="right")
 
