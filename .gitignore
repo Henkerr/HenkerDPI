@@ -15,3 +15,6 @@ duzeltmeyi_uygula.bat
 lang_pref.json
 theme_pref.json
 installer/
+.claude/
+.vscode/
+.idea/

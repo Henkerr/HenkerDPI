@@ -5,63 +5,61 @@ HenkerDPI V2 - Language Support
 
 import json
 import os
-import sys
 
-# PyInstaller onefile: __file__ resolves inside the ephemeral _MEIxxxx temp dir
-# that Windows deletes on process exit, so the preference must be written next
-# to the exe (mirroring config.py) — otherwise the UI language silently resets
-# to English on every launch of the frozen build.
-if getattr(sys, "frozen", False):
-    LANG_DIR = os.path.dirname(sys.executable)
-else:
-    LANG_DIR = os.path.dirname(os.path.abspath(__file__))
-LANG_FILE = os.path.join(LANG_DIR, "lang_pref.json")
+from config import STATE_DIR, resolve_pref
+
+# Preferences live in the per-user state dir (see config.state_dir): a frozen
+# build's __file__ resolves inside the ephemeral _MEIxxxx temp dir Windows
+# deletes on exit, so writing there would silently reset the UI language to
+# English on every launch.
+LANG_DIR = STATE_DIR
+LANG_FILE = resolve_pref("lang_pref.json")
 
 LANGUAGES = {
     "tr": {
-        "name": "Turkce",
-        "badge_offline": "  Offline  ",
-        "badge_online": "  Online  ",
-        "status_off": "Bypass Kapali",
+        "name": "Türkçe",
+        "badge_offline": "  Çevrimdışı  ",
+        "badge_online": "  Çevrimiçi  ",
+        "status_off": "Bypass Kapalı",
         "status_on": "Koruma Aktif",
-        "desc_off": "Baslatmak icin butona tiklayin",
-        "desc_on": "DPI bypass calisiyor",
+        "desc_off": "Başlatmak için butona tıklayın",
+        "desc_on": "DPI bypass çalışıyor",
         "stat_bypass": "Bypass",
-        "stat_passed": "Gecen",
-        "stat_uptime": "Sure",
-        "info_method": "Yontem",
-        "info_fragment": "Fragment",
-        "log": "Log",
+        "stat_passed": "Geçen",
+        "stat_uptime": "Süre",
+        "info_method": "Yöntem",
+        "info_fragment": "Parçalama",
+        "log": "Günlük",
         "clear": "Temizle",
-        "autostart": "Acilista baslat",
-        "tray_show": "Goster",
-        "tray_start": "Baslat",
+        "autostart": "Açılışta başlat",
+        "tray_show": "Göster",
+        "tray_start": "Başlat",
         "tray_stop": "Durdur",
-        "tray_quit": "Cikis",
-        "close_confirm": "Bypass calisiyor. Kapatilsin mi?",
-        "already_running": "HenkerDPI zaten calisiyor!",
-        "admin_required": "Yonetici yetkisi gerekli!\nSag tik > Yonetici olarak calistir",
-        "autostart_added": "[+] Acilisa eklendi",
-        "autostart_removed": "[-] Acilistan kaldirildi",
+        "tray_quit": "Çıkış",
+        "close_confirm": "Bypass çalışıyor. Kapatılsın mı?",
+        "already_running": "HenkerDPI zaten çalışıyor!",
+        "admin_required": "Yönetici yetkisi gerekli!\nSağ tık > Yönetici olarak çalıştır",
+        "autostart_added": "[+] Açılışa eklendi",
+        "autostart_removed": "[-] Açılıştan kaldırıldı",
         "engine_active": "[+] HenkerDPI V2 aktif",
         "engine_stopped": "[-] Durduruldu",
         "uptime_fmt": "{h}s {m}dk",
         "uptime_fmt_short": "{m}dk {s}sn",
         "log_block": "Engel",
-        "custom_domains": "Ozel Domainler",
+        "custom_domains": "Özel Alan Adları",
         "add_domain": "Ekle",
         "remove_domain": "Sil",
-        "domain_placeholder": "orn: youtube.com",
-        "domain_added": "[+] Domain eklendi: {domain}",
-        "domain_removed": "[-] Domain silindi: {domain}",
-        "domain_exists": "[!] Domain zaten listede: {domain}",
-        "domain_invalid": "[!] Gecersiz domain",
-        "mode_all": "Tumu",
-        "mode_selective": "Secili",
+        "domain_placeholder": "örn: youtube.com",
+        "domain_added": "[+] Alan adı eklendi: {domain}",
+        "domain_removed": "[-] Alan adı silindi: {domain}",
+        "domain_exists": "[!] Alan adı zaten listede: {domain}",
+        "domain_invalid": "[!] Geçersiz alan adı",
+        "mode_all": "Tümü",
+        "mode_selective": "Seçili",
         "mode_label": "Bypass Modu",
         "categories": "Kategoriler",
-        "doh_label": "Guvenli DNS",
-        "doh_desc": "DNS-over-HTTPS ile DNS engellemesini as",
+        "doh_label": "Güvenli DNS",
+        "doh_desc": "Engellemeyi aşmak için DNS sunucusunu değiştirir (şifreli değil)",
     },
     "en": {
         "name": "English",
@@ -106,7 +104,7 @@ LANGUAGES = {
         "mode_label": "Bypass Mode",
         "categories": "Categories",
         "doh_label": "Secure DNS",
-        "doh_desc": "Bypass DNS blocking with DNS-over-HTTPS",
+        "doh_desc": "Switch resolver to bypass DNS blocking (not encrypted)",
     },
     "hi": {
         "name": "Hindi",
@@ -151,7 +149,7 @@ LANGUAGES = {
         "mode_label": "Bypass Mode",
         "categories": "Categories",
         "doh_label": "Secure DNS",
-        "doh_desc": "Bypass DNS blocking with DNS-over-HTTPS",
+        "doh_desc": "Switch resolver to bypass DNS blocking (not encrypted)",
     },
     "ja": {
         "name": "Japanese",
@@ -196,7 +194,7 @@ LANGUAGES = {
         "mode_label": "Bypass Mode",
         "categories": "Categories",
         "doh_label": "Secure DNS",
-        "doh_desc": "Bypass DNS blocking with DoH",
+        "doh_desc": "Switch resolver to bypass DNS blocking (not encrypted)",
     },
     "zh": {
         "name": "Chinese",
@@ -241,7 +239,7 @@ LANGUAGES = {
         "mode_label": "Bypass Mode",
         "categories": "Categories",
         "doh_label": "Secure DNS",
-        "doh_desc": "Bypass DNS blocking with DoH",
+        "doh_desc": "Switch resolver to bypass DNS blocking (not encrypted)",
     },
     "ru": {
         "name": "Russian",
@@ -286,7 +284,7 @@ LANGUAGES = {
         "mode_label": "Bypass Mode",
         "categories": "Categories",
         "doh_label": "Secure DNS",
-        "doh_desc": "Bypass DNS blocking with DoH",
+        "doh_desc": "Switch resolver to bypass DNS blocking (not encrypted)",
     },
     "de": {
         "name": "Deutsch",
@@ -331,7 +329,7 @@ LANGUAGES = {
         "mode_label": "Bypass Mode",
         "categories": "Categories",
         "doh_label": "Secure DNS",
-        "doh_desc": "Bypass DNS blocking with DoH",
+        "doh_desc": "Switch resolver to bypass DNS blocking (not encrypted)",
     },
     "da": {
         "name": "Dansk",
@@ -376,7 +374,7 @@ LANGUAGES = {
         "mode_label": "Bypass Mode",
         "categories": "Categories",
         "doh_label": "Secure DNS",
-        "doh_desc": "Bypass DNS blocking with DoH",
+        "doh_desc": "Switch resolver to bypass DNS blocking (not encrypted)",
     },
 }
 

@@ -19,6 +19,8 @@ import socket
 import subprocess
 import ctypes
 
+from config import STATE_DIR
+
 # Hide console windows for all subprocess calls
 _CF = subprocess.CREATE_NO_WINDOW
 
@@ -103,19 +105,7 @@ def _reachable(ip: str, port: int = 53, timeout: float = 1.0) -> bool:
         return False
 
 
-def _state_dir() -> str:
-    """A writable state dir (the frozen exe may live in read-only Program Files)."""
-    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    d = os.path.join(base, "HenkerDPI")
-    try:
-        os.makedirs(d, exist_ok=True)
-    except OSError:
-        d = os.path.dirname(sys.executable if getattr(sys, "frozen", False)
-                            else os.path.abspath(__file__))
-    return d
-
-
-_JOURNAL_FILE = os.path.join(_state_dir(), "dns_backup.json")
+_JOURNAL_FILE = os.path.join(STATE_DIR, "dns_backup.json")
 
 
 def is_admin() -> bool:

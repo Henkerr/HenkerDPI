@@ -7,18 +7,21 @@ General-purpose — all sites or selected domains.
 import struct
 import pydivert
 from pydivert.consts import Direction
-from config import get_all_domains, load_settings, MODE_ALL
+from config import MODE_ALL
 
 FAKE_TTL = 6  # Exact V1 value — proven to work
 
-# Local/private IP ranges that should never be bypassed
+# Local/private IP ranges that should never be bypassed.
+# 169.254/16 is link-local (APIPA); 100.64/10 is carrier-grade NAT, which many
+# mobile ISPs hand out — fragmenting a handshake to a CGNAT-internal host is
+# pointless and can break captive portals.
 _SKIP_PREFIXES = (
-    "127.", "10.", "0.",
+    "127.", "10.", "0.", "169.254.",
     "192.168.", "172.16.", "172.17.", "172.18.", "172.19.",
     "172.20.", "172.21.", "172.22.", "172.23.", "172.24.",
     "172.25.", "172.26.", "172.27.", "172.28.", "172.29.",
     "172.30.", "172.31.",
-)
+) + tuple(f"100.{n}." for n in range(64, 128))
 _SKIP_SNIS = {"localhost", "localhost.localdomain", "wpad"}
 
 
@@ -63,38 +66,6 @@ def extract_sni(data: bytes) -> str | None:
     return None
 
 
-def find_sni_offset(data: bytes) -> int | None:
-    """Find the byte offset where SNI hostname starts in payload."""
-    try:
-        if len(data) < 5 or data[0] != 0x16:
-            return None
-        offset = 5
-        if data[offset] != 0x01:
-            return None
-        offset += 4 + 2 + 32
-        session_id_len = data[offset]
-        offset += 1 + session_id_len
-        cipher_suites_len = struct.unpack("!H", data[offset:offset + 2])[0]
-        offset += 2 + cipher_suites_len
-        comp_methods_len = data[offset]
-        offset += 1 + comp_methods_len
-        if offset + 2 > len(data):
-            return None
-        extensions_len = struct.unpack("!H", data[offset:offset + 2])[0]
-        offset += 2
-        end = offset + extensions_len
-        while offset + 4 <= end:
-            ext_type = struct.unpack("!H", data[offset:offset + 2])[0]
-            ext_len = struct.unpack("!H", data[offset + 2:offset + 4])[0]
-            offset += 4
-            if ext_type == 0x0000:
-                return offset + 5
-            offset += ext_len
-    except (IndexError, struct.error):
-        pass
-    return None
-
-
 def _is_local_sni(sni: str) -> bool:
     """Exclude local/private network addresses from bypass."""
     if sni in _SKIP_SNIS:
@@ -106,31 +77,6 @@ def _is_local_sni(sni: str) -> bool:
     if sni.endswith((".local", ".internal", ".lan", ".home")):
         return True
     return False
-
-
-def should_bypass(sni: str | None, settings: dict = None) -> bool:
-    """
-    Decide whether to bypass based on mode:
-    - "all": Every TLS ClientHello is bypassed (except local)
-    - "selective": Only enabled categories + custom domains
-    """
-    if sni is None:
-        return False
-
-    # Never bypass local/private addresses
-    if _is_local_sni(sni):
-        return False
-
-    if settings is None:
-        settings = load_settings()
-
-    # ALL mode: bypass everything
-    if settings.get("mode") == MODE_ALL:
-        return True
-
-    # SELECTIVE mode: check domain list
-    domains = get_all_domains(settings)
-    return any(sni == domain or sni.endswith("." + domain) for domain in domains)
 
 
 def domain_matches(sni: str, domain_set: set) -> bool:
@@ -152,8 +98,8 @@ def domain_matches(sni: str, domain_set: set) -> bool:
 def should_bypass_fast(sni: str | None, mode: str, domain_set: set) -> bool:
     """Hot-path bypass decision using a cached (mode, domain_set).
 
-    Equivalent to should_bypass() but does NO disk I/O or list rebuild per
-    packet — the engine precomputes the set once on start/reload.
+    Does NO disk I/O and rebuilds no list per packet — the engine precomputes
+    the domain set once on start/reload.
     """
     if not sni:
         return False
@@ -377,15 +323,3 @@ def tcp_fragment_and_send(w, packet, sni: str, verbose: bool = False) -> bool:
         if verbose:
             print("[!] fragment send failed")
     return True
-
-
-def extract_http_host(data: bytes) -> str | None:
-    """Extract HTTP Host header from plaintext HTTP request."""
-    try:
-        text = data.decode("ascii", errors="ignore")
-        for line in text.split("\r\n"):
-            if line.lower().startswith("host:"):
-                return line.split(":", 1)[1].strip()
-    except Exception:
-        pass
-    return None

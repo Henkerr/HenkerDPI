@@ -4,7 +4,7 @@
 [Setup]
 AppId={{A8F4E3B2-5D6C-4B9A-8E2F-3D7E9F1B4C6A}
 AppName=HenkerDPI V2
-AppVersion=2.2.0
+AppVersion=2.3.0
 AppPublisher=Henkerr
 AppPublisherURL=https://github.com/Henkerr
 DefaultDirName={autopf}\HenkerDPI_V2
@@ -53,8 +53,12 @@ Filename: "{app}\HenkerDPI_V2.exe"; Description: "Launch HenkerDPI V2"; Flags: n
 ; toggle, which registers an elevated, silent, drop-to-tray Scheduled Task.
 
 [UninstallDelete]
+; Preferences and the DNS journal live in %LOCALAPPDATA%\HenkerDPI since 2.3.0.
+; The {app}\* entries clean up files left behind by an upgrade from <= 2.2.0.
+Type: filesandordirs; Name: "{localappdata}\HenkerDPI"
 Type: files; Name: "{app}\henkerdpi_v2.pid"
 Type: files; Name: "{app}\settings.json"
+Type: files; Name: "{app}\settings.json.bak"
 Type: files; Name: "{app}\custom_domains.json"
 Type: files; Name: "{app}\lang_pref.json"
 Type: files; Name: "{app}\theme_pref.json"

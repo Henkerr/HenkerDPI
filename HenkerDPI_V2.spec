@@ -7,6 +7,11 @@ a = Analysis(
     datas=[
         ('icon.ico', '.'),
         ('icon.png', '.'),
+        # LGPL v3 requires the license text to travel with the binary that
+        # embeds WinDivert/pystray — a link in the repo is not sufficient.
+        ('licenses', 'licenses'),
+        ('THIRD-PARTY-NOTICES.md', '.'),
+        ('LICENSE', '.'),
     ],
     hiddenimports=[
         'pystray._win32',

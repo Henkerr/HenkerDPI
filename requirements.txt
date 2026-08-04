@@ -1,4 +1,4 @@
-# Runtime dependencies, pinned to the exact versions the v2.2.0 release was
+# Runtime dependencies, pinned to the exact versions the v2.3.0 release was
 # validated against. pydivert 3.1.0 bundles WinDivert 2.2.2 — the packet-driver
 # layer the reliability-critical filter/fragmentation/QUIC code is tuned for, so
 # it must not float. Build tooling is in requirements-build.txt.

@@ -20,7 +20,7 @@ from doh import restore_dns_from_journal
 from lang import LANGUAGES, load_lang_pref, save_lang_pref, t
 from config import (
     load_custom_domains, save_custom_domains, load_settings, save_settings,
-    CATEGORIES, DOH_PROVIDERS, MODE_ALL, MODE_SELECTIVE,
+    CATEGORIES, DOH_PROVIDERS, MODE_ALL, MODE_SELECTIVE, resolve_pref,
 )
 
 try:
@@ -117,7 +117,7 @@ THEMES = {
 }
 
 DEFAULT_THEME = "graphite"
-THEME_FILE = os.path.join(_APP_DIR, "theme_pref.json")
+THEME_FILE = resolve_pref("theme_pref.json")
 
 NUM_HOVER_FRAMES = 4
 HOVER_ANIM_MS = 60
@@ -652,7 +652,7 @@ class HenkerDPIApp(ctk.CTk):
             progress_color=th["accent"], button_color=th["fg3"],
             button_hover_color=th["fg2"])
         self._auto_switch.pack(side="left")
-        self._version_label = ctk.CTkLabel(bottom, text="v2.2",
+        self._version_label = ctk.CTkLabel(bottom, text="v2.3",
                      font=ctk.CTkFont(FONT, 9), text_color=th["fg3"])
         self._version_label.pack(side="right")
 
@@ -1113,11 +1113,30 @@ class HenkerDPIApp(ctk.CTk):
     # === Autostart ===
 
     def _check_autostart(self):
+        """Reflect autostart state, treating a task that points elsewhere as OFF.
+
+        A task registered by a previous install still 'exists' after the exe is
+        moved, renamed or reinstalled to another folder — but it fails every
+        logon with "file not found". Showing the toggle ON then hides a broken
+        autostart, so compare the task's action against the current target and
+        re-register when they differ.
+        """
         try:
-            r = subprocess.run(["schtasks", "/query", "/tn", SERVICE_NAME],
-                               capture_output=True, text=True, creationflags=_CF)
-            if r.returncode == 0:
+            r = subprocess.run(
+                ["schtasks", "/query", "/tn", SERVICE_NAME, "/fo", "list", "/v"],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", creationflags=_CF)
+            if r.returncode != 0:
+                return
+            # Locale-independent: match the exe path itself, not the field label
+            # (a Turkish Windows prints "Görev Yolu", not "Task To Run").
+            target = _autostart_target()
+            exe = target.split('"')[1] if target.startswith('"') else target
+            if exe.lower() in (r.stdout or "").lower():
                 self._auto_var.set(True)
+            else:
+                self._auto_var.set(True)
+                self._toggle_auto()   # rewrite the stale task to the real path
         except Exception:
             pass
 

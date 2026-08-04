@@ -7,14 +7,57 @@ import json
 import os
 import sys
 
-# PyInstaller onefile: write next to the exe, not in temp dir
+# PyInstaller onefile: __file__ points inside the ephemeral _MEIxxxx temp dir
+# Windows deletes on exit, so the exe's own directory is the pre-2.3 anchor.
 if getattr(sys, 'frozen', False):
     _APP_DIR = os.path.dirname(sys.executable)
 else:
     _APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
-SETTINGS_FILE = os.path.join(_APP_DIR, "settings.json")
-CUSTOM_DOMAINS_FILE = os.path.join(_APP_DIR, "custom_domains.json")
+
+def state_dir() -> str:
+    """Per-user writable directory for preferences and the DNS journal.
+
+    An installed build lives under Program Files, where writing next to the exe
+    requires admin, makes preferences machine-wide instead of per-user, and can
+    be refused outright by Controlled Folder Access. %LOCALAPPDATA% is the right
+    home for both; fall back to the app dir only if it cannot be created.
+    """
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    d = os.path.join(base, "HenkerDPI")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        return _APP_DIR
+    return d
+
+
+STATE_DIR = state_dir()
+
+
+def resolve_pref(filename: str) -> str:
+    """Path for a preference file, migrating a pre-2.3 copy left beside the exe.
+
+    Builds up to 2.2 wrote preferences next to the executable. Move such a file
+    on first run of 2.3 so upgrading users keep their mode, theme and language
+    instead of silently reverting to defaults.
+    """
+    new = os.path.join(STATE_DIR, filename)
+    old = os.path.join(_APP_DIR, filename)
+    if old != new and not os.path.exists(new) and os.path.exists(old):
+        try:
+            os.replace(old, new)
+        except OSError:
+            try:
+                with open(old, "rb") as src, open(new, "wb") as dst:
+                    dst.write(src.read())
+            except OSError:
+                return old
+    return new
+
+
+SETTINGS_FILE = resolve_pref("settings.json")
+CUSTOM_DOMAINS_FILE = resolve_pref("custom_domains.json")
 
 # === Bypass Modes ===
 # "all"        — Bypass all HTTPS traffic (like Warp/VPN)
@@ -126,21 +169,24 @@ CATEGORIES = {
     },
 }
 
-# === DNS-over-HTTPS Providers ===
+# === Secure DNS resolvers (GUI labels) ===
+# NOTE: despite the historical "doh"/DOH_ naming kept for settings-file
+# compatibility, this app does NOT speak DNS-over-HTTPS. It repoints the
+# system resolver to one of these public servers over plain UDP/53 to defeat
+# ISP DNS hijacking; the queries themselves are NOT encrypted. The actual
+# resolver addresses (v4 + v6) live in doh.py PROVIDERS — these entries only
+# supply the display name and the IP shown in the UI.
 DOH_PROVIDERS = {
     "cloudflare": {
         "name": "Cloudflare",
-        "url": "https://cloudflare-dns.com/dns-query",
         "ip": "1.1.1.1",
     },
     "google": {
         "name": "Google",
-        "url": "https://dns.google/dns-query",
         "ip": "8.8.8.8",
     },
     "quad9": {
         "name": "Quad9",
-        "url": "https://dns.quad9.net/dns-query",
         "ip": "9.9.9.9",
     },
 }

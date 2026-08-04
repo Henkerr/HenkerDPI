@@ -2,16 +2,15 @@
 
 # HenkerDPI V2
 
-**General-purpose DPI bypass — Windows & macOS**
+**General-purpose DPI bypass for Windows**
 
 [![Windows](https://img.shields.io/badge/Windows-10%2F11-blue?logo=windows)](https://github.com/Henkerr/HenkerDPI-V2)
-[![macOS](https://img.shields.io/badge/macOS-12%2B-white?logo=apple)](https://github.com/Henkerr/HenkerDPI-V2/tree/master/macos)
 [![Python](https://img.shields.io/badge/python-3.10%2B-yellow?logo=python)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 </div>
 
-A general-purpose DPI (Deep Packet Inspection) bypass tool for **Windows and macOS**. Access any blocked website freely without a VPN.
+A general-purpose DPI (Deep Packet Inspection) bypass tool for **Windows**. Access any blocked website freely without a VPN.
 
 HenkerDPI works at the packet level — it manipulates TLS handshake packets to prevent ISP-level DPI systems from detecting and blocking your connections. Unlike a VPN, it adds virtually zero latency and doesn't route your traffic through external servers.
 
@@ -22,11 +21,10 @@ HenkerDPI works at the packet level — it manipulates TLS handshake packets to 
 - **8 Preset Categories** — Social Media, Discord, Video/Streaming, Knowledge/Wiki, Developer, News/Media, VPN/Proxy, AI Services
 - **Secure DNS** — Redirects system DNS to Cloudflare, Google, or Quad9 to bypass ISP DNS hijacking/blocking, with automatic cross-provider fallback
 - **Custom Domains** — Add any domain to the bypass list
-- **4 Themes** — Graphite, Iris, Halcyon, Obsidian (Windows; the macOS build has its own set)
+- **4 Themes** — Graphite, Iris, Halcyon, Obsidian
 - **8 Languages** — English, Turkish, Hindi, Japanese, Chinese, Russian, German, Danish
 - **System Tray** — Minimize to tray, runs silently in background
-- **Autostart** — Windows Task Scheduler / macOS LaunchAgent
-- **Cross-platform** — Windows 10/11 + macOS 12+
+- **Autostart** — Silent, elevated Windows Task Scheduler task
 
 ## How It Works
 
@@ -47,7 +45,7 @@ Additionally:
 By default HenkerDPI bypasses **IPv4 traffic only** — the proven, drop-free path. On a dual-stack network a site reachable over IPv6 may otherwise connect without the bypass applied, so if a blocked site opens inconsistently you have two options:
 
 - **Simplest:** force the IPv4 route (or disable IPv6 on the adapter) so the bypass always takes effect.
-- **Experimental IPv6 bypass:** set `"ipv6_bypass_enabled": true` in `settings.json` (created next to the exe on first run), then restart the app. This also diverts IPv6 TCP/443 ClientHellos and refuses IPv6 QUIC. It is **off by default** and kept experimental because the IPv4 path is the one validated to be drop-free; enable it only if you specifically need IPv6-only sites bypassed.
+- **Experimental IPv6 bypass:** set `"ipv6_bypass_enabled": true` in `%LOCALAPPDATA%\HenkerDPI\settings.json` (created on first run), then restart the app. This also diverts IPv6 TCP/443 ClientHellos and refuses IPv6 QUIC. It is **off by default** and kept experimental because the IPv4 path is the one validated to be drop-free; enable it only if you specifically need IPv6-only sites bypassed.
 
 ## Installation
 
@@ -66,32 +64,12 @@ pip install -r requirements.txt
 python gui.py  # Must run as Administrator
 ```
 
-### macOS
-
-```bash
-git clone https://github.com/Henkerr/HenkerDPI-V2.git
-cd HenkerDPI-V2/macos
-pip3 install -r requirements.txt
-sudo python3 gui.py  # Root required for raw sockets + pf
-```
-
-> **Note:** Root privileges are required for raw socket injection and pf (packet filter) rules.
-
 ### Build EXE (Windows)
 
 ```bash
 pip install -r requirements.txt -r requirements-build.txt
 python -m PyInstaller HenkerDPI_V2.spec --clean -y
-# Output: dist/HenkerDPI_V2.exe (FileVersion 2.2.0.0, admin-manifested, WinDivert bundled)
-```
-
-### Build App (macOS)
-
-```bash
-cd macos
-chmod +x build_mac.sh
-./build_mac.sh
-# Output: dist/HenkerDPI_V2.app
+# Output: dist/HenkerDPI_V2.exe (FileVersion 2.3.0.0, admin-manifested, WinDivert bundled)
 ```
 
 ### Build Installer (Windows)
@@ -105,26 +83,13 @@ ISCC.exe setup.iss
 
 ## Requirements
 
-### Windows
 - Windows 10/11 (64-bit)
 - Administrator privileges (required for WinDivert)
-- Python 3.10+
+- Python 3.10+ (only to run or build from source)
 
 | Package | Purpose |
 |---------|---------|
 | `pydivert` | WinDivert wrapper for kernel-level packet interception |
-| `customtkinter` | Modern dark-themed GUI framework |
-| `Pillow` | Power button rendering with glow animations |
-| `pystray` | System tray integration |
-
-### macOS
-- macOS 12 Monterey or later
-- Root privileges (required for raw sockets + pf)
-- Python 3.10+
-
-| Package | Purpose |
-|---------|---------|
-| `scapy` | Packet sniffing and raw socket injection |
 | `customtkinter` | Modern dark-themed GUI framework |
 | `Pillow` | Power button rendering with glow animations |
 | `pystray` | System tray integration |
@@ -135,7 +100,7 @@ ISCC.exe setup.iss
 2. **Select mode**:
    - `All Sites` — Bypass everything (recommended)
    - `Selective` — Choose specific categories
-3. **Toggle Secure DNS** — Enable DoH to bypass DNS blocking
+3. **Toggle Secure DNS** — Repoint your resolver to Cloudflare/Google/Quad9 to bypass ISP DNS blocking (this changes *which* resolver you use; it does not encrypt your DNS queries)
 4. **Click the power button** — Protection starts immediately
 5. **Minimize** — App goes to system tray
 
@@ -171,21 +136,17 @@ HenkerDPI-V2/
 ├── gui.py             — CustomTkinter GUI (themes, animations, controls)
 ├── main.py            — BypassEngine (WinDivert packet interception)
 ├── strategies.py      — DPI bypass logic (SNI extraction, fragmentation)
-├── config.py          — Categories, DoH providers, settings management
-├── doh.py             — DNS-over-HTTPS manager (netsh/PowerShell)
+├── config.py          — Categories, resolvers, settings + state-dir management
+├── doh.py             — Secure DNS manager: crash-safe resolver switching (netsh/PowerShell)
 ├── lang.py            — Multi-language support (8 languages)
-├── service.py         — Legacy CLI service manager (used by the macOS build; not needed on Windows)
-└── macos/             — macOS version
-    ├── gui.py         — macOS GUI (fcntl lock, LaunchAgent)
-    ├── main.py        — BypassEngine (scapy + raw sockets)
-    ├── strategies.py  — Same bypass logic, raw socket injection
-    ├── pf_manager.py  — pf (pfctl) RST drop + QUIC block
-    ├── doh.py         — DoH via networksetup
-    ├── config.py      — Shared config (platform-independent)
-    ├── lang.py        — i18n (8 languages)
-    ├── service.py     — LaunchAgent service manager
-    └── build_mac.sh   — PyInstaller build script
+├── licenses/          — LGPL/GPL texts for the bundled third-party components
+├── HenkerDPI_V2.spec  — PyInstaller build definition
+└── setup.iss          — Inno Setup installer script
 ```
+
+Preferences (`settings.json`, `custom_domains.json`, `lang_pref.json`,
+`theme_pref.json`) and the crash-safe DNS journal live in
+`%LOCALAPPDATA%\HenkerDPI\`.
 
 ## HenkerDPI V1 vs V2
 
@@ -194,21 +155,18 @@ HenkerDPI-V2/
 | Scope | Discord only | All websites |
 | Modes | Single | All / Selective |
 | Categories | None | 8 presets |
-| DNS Bypass | None | DoH (Cloudflare/Google/Quad9) |
-| Local traffic | Not filtered | Excluded (127.x, 192.168.x) |
+| DNS Bypass | None | Secure DNS (Cloudflare/Google/Quad9) |
+| Local traffic | Not filtered | Excluded (loopback, RFC1918, link-local, CGNAT) |
 
-## Windows vs macOS
+## macOS
 
-| Component | Windows | macOS |
-|-----------|---------|-------|
-| Packet interception | WinDivert (pydivert) | scapy sniff + raw sockets |
-| RST/QUIC block | Kernel-level WinDivert DROP | pf (pfctl) anchor rules |
-| DNS management | netsh / PowerShell | networksetup |
-| Auto-start | Task Scheduler (schtasks) | LaunchAgent (launchctl) |
-| Single instance | CreateMutexW | fcntl.flock() |
-| Admin check | ctypes.windll.IsUserAnAdmin | os.geteuid() == 0 |
-
-The bypass logic (TTL fake packet, SNI fragmentation, disorder) is identical across both platforms.
+An experimental macOS port (scapy + pf + `networksetup`) lives on the
+[`macos-experimental`](https://github.com/Henkerr/HenkerDPI-V2/tree/macos-experimental)
+branch. It is **not maintained and not recommended**: the reliability fixes shipped
+in 2.1.0/2.2.0 — the crash-safe DNS journal, authenticated journal ownership, the
+resolver reachability probe and the decoy-packet checksum fix — were never
+backported to it, so it still carries the intermittent-disconnect bug that those
+releases fixed on Windows. Treat it as source to build on, not as a release.
 
 ## License
 
