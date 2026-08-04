@@ -14,7 +14,7 @@ APP_VERSION = "2.4.0"
 
 # Repository the updater queries. Both are validated at download time so a
 # tampered API response cannot point the downloader at an arbitrary host.
-GITHUB_REPO = "Henkerr/HenkerDPI-V2"
+GITHUB_REPO = "Henkerr/HenkerDPI"
 RELEASE_ASSET_NAME = "HenkerDPI.exe"
 
 # PyInstaller onefile: __file__ points inside the ephemeral _MEIxxxx temp dir

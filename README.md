@@ -4,7 +4,7 @@
 
 **General-purpose DPI bypass for Windows**
 
-[![Windows](https://img.shields.io/badge/Windows-10%2F11-blue?logo=windows)](https://github.com/Henkerr/HenkerDPI-V2)
+[![Windows](https://img.shields.io/badge/Windows-10%2F11-blue?logo=windows)](https://github.com/Henkerr/HenkerDPI)
 [![Python](https://img.shields.io/badge/python-3.10%2B-yellow?logo=python)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -66,8 +66,8 @@ From 2.4.0 on, HenkerDPI checks GitHub once a day and shows a banner when a newe
 ### Windows — From Source
 
 ```bash
-git clone https://github.com/Henkerr/HenkerDPI-V2.git
-cd HenkerDPI-V2
+git clone https://github.com/Henkerr/HenkerDPI.git
+cd HenkerDPI
 pip install -r requirements.txt
 python gui.py  # Must run as Administrator
 ```
@@ -140,7 +140,7 @@ python main.py -v        # Verbose mode (log every bypass)
 ## Architecture
 
 ```
-HenkerDPI-V2/
+HenkerDPI/
 ├── gui.py             — CustomTkinter GUI (themes, animations, controls)
 ├── main.py            — BypassEngine (WinDivert packet interception)
 ├── strategies.py      — DPI bypass logic (SNI extraction, fragmentation)
@@ -170,7 +170,7 @@ Preferences (`settings.json`, `custom_domains.json`, `lang_pref.json`,
 ## macOS
 
 An experimental macOS port (scapy + pf + `networksetup`) lives on the
-[`macos-experimental`](https://github.com/Henkerr/HenkerDPI-V2/tree/macos-experimental)
+[`macos-experimental`](https://github.com/Henkerr/HenkerDPI/tree/macos-experimental)
 branch. It is **not maintained and not recommended**: the reliability fixes shipped
 in 2.1.0/2.2.0 — the crash-safe DNS journal, authenticated journal ownership, the
 resolver reachability probe and the decoy-packet checksum fix — were never

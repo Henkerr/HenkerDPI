@@ -22,7 +22,7 @@ a modified version: extract the onefile executable (or build from source with
 `pip install -r requirements.txt -r requirements-build.txt` and
 `python -m PyInstaller HenkerDPI.spec`) and substitute your own
 `WinDivert64.dll` / `WinDivert64.sys`. HenkerDPI's own source is MIT and published
-in full at https://github.com/Henkerr/HenkerDPI-V2, so relinking is unrestricted.
+in full at https://github.com/Henkerr/HenkerDPI, so relinking is unrestricted.
 
 ## pydivert
 
