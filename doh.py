@@ -1,5 +1,5 @@
 """
-HenkerDPI V2 - Secure DNS manager
+HenkerDPI - Secure DNS manager
 Redirects system DNS to secure resolvers (Cloudflare / Google / Quad9) to
 bypass ISP-level DNS blocking/hijacking.
 

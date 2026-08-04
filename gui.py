@@ -1,5 +1,5 @@
 """
-HenkerDPI V2 - Modern GUI
+HenkerDPI - Modern GUI
 Features: Mode selector (All/Selective), category toggles, Secure DNS switch, 4 themes
 """
 
@@ -14,6 +14,7 @@ import os
 import sys
 import time
 import math
+import webbrowser
 
 from main import BypassEngine, is_admin
 from doh import restore_dns_from_journal
@@ -21,7 +22,9 @@ from lang import LANGUAGES, load_lang_pref, save_lang_pref, t
 from config import (
     load_custom_domains, save_custom_domains, load_settings, save_settings,
     CATEGORIES, DOH_PROVIDERS, MODE_ALL, MODE_SELECTIVE, resolve_pref,
+    APP_VERSION,
 )
+import updater
 
 try:
     from PIL import Image, ImageDraw, ImageTk, ImageFilter
@@ -37,7 +40,7 @@ except ImportError:
 
 ctk.set_appearance_mode("dark")
 
-SERVICE_NAME = "HenkerDPI_V2"
+SERVICE_NAME = "HenkerDPI"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Writable dir for user prefs. SCRIPT_DIR is the read-only _MEIxxxx temp dir in
 # a frozen onefile build (it also holds the bundled icons), so theme/lang prefs
@@ -246,11 +249,18 @@ class HenkerDPIApp(ctk.CTk):
         self._hover_anim_id = None
         self._render_power_frames()
         self._theme_dots = []
+        self._update_info = None
+        self._update_busy = False
+        self._update_retried = False
 
         self._build_ui()
         self._poll_log_queue()
         self._check_autostart()
         self._highlight_active_theme()
+
+        # Drop the exe the previous update replaced, then look for a new one.
+        updater.cleanup_old_version()
+        self.after(2500, self._check_update_async)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.bind("<Unmap>", self._on_minimize)
@@ -342,6 +352,33 @@ class HenkerDPIApp(ctk.CTk):
             fg_color="transparent", hover_color=th["border"],
             text_color=th["fg2"], command=self._toggle_settings)
         self._gear_btn.pack(side="right", padx=(0, 12))
+
+        # === Update banner (hidden until a newer release is found) ===
+        self._update_bar = ctk.CTkFrame(self._scroll, fg_color=th["accent_dim"],
+                                        corner_radius=0, height=38)
+        self._update_bar.pack_propagate(False)
+        self._update_msg = ctk.CTkLabel(
+            self._update_bar, text="", font=ctk.CTkFont(FONT, 11, "bold"),
+            text_color="#ffffff")
+        self._update_msg.pack(side="left", padx=(16, 0))
+        self._update_close = ctk.CTkButton(
+            self._update_bar, text="✕", width=26, height=24,
+            font=ctk.CTkFont(FONT, 12), fg_color="transparent",
+            hover_color=th["accent"], text_color="#ffffff",
+            command=self._dismiss_update)
+        self._update_close.pack(side="right", padx=(0, 10))
+        self._update_btn = ctk.CTkButton(
+            self._update_bar, text="", width=90, height=24,
+            font=ctk.CTkFont(FONT, 11, "bold"), corner_radius=6,
+            fg_color="#ffffff", hover_color="#e6e6e6",
+            text_color=th["accent_dim"], command=self._do_update)
+        self._update_btn.pack(side="right", padx=(0, 8))
+        self._update_notes = ctk.CTkButton(
+            self._update_bar, text="", width=110, height=24,
+            font=ctk.CTkFont(FONT, 11), fg_color="transparent",
+            hover_color=th["accent"], text_color="#ffffff",
+            command=self._open_release_notes)
+        self._update_notes.pack(side="right", padx=(0, 4))
 
         # === Main Content ===
         main = ctk.CTkFrame(self._scroll, fg_color="transparent")
@@ -652,7 +689,7 @@ class HenkerDPIApp(ctk.CTk):
             progress_color=th["accent"], button_color=th["fg3"],
             button_hover_color=th["fg2"])
         self._auto_switch.pack(side="left")
-        self._version_label = ctk.CTkLabel(bottom, text="v2.3",
+        self._version_label = ctk.CTkLabel(bottom, text=f"v{APP_VERSION}",
                      font=ctk.CTkFont(FONT, 9), text_color=th["fg3"])
         self._version_label.pack(side="right")
 
@@ -783,6 +820,12 @@ class HenkerDPIApp(ctk.CTk):
         self._header.configure(fg_color=th["card"])
         self._henker_label.configure(text_color=th["fg"])
         self._dpi_label.configure(text_color=th["accent"])
+
+        self._update_bar.configure(fg_color=th["accent_dim"])
+        self._update_btn.configure(fg_color="#ffffff", hover_color="#e6e6e6",
+                                   text_color=th["accent_dim"])
+        self._update_close.configure(hover_color=th["accent"])
+        self._update_notes.configure(hover_color=th["accent"])
         if not self._running:
             self._badge.configure(text_color=th["fg3"], fg_color=th["border"])
         self._lang_menu.configure(fg_color=th["border"], button_color=th["accent_dim"],
@@ -938,6 +981,13 @@ class HenkerDPIApp(ctk.CTk):
                                fg_color=th["accent_dim"])
         self._tick_stats()
         self._update_tray_menu()
+        # Retry the update check now that traffic goes through the bypass —
+        # this is the attempt that succeeds when the ISP blocks GitHub. Forced
+        # past the daily throttle, but only once per session and only if the
+        # startup attempt actually failed to reach GitHub.
+        if not self._update_retried and updater.last_check_failed():
+            self._update_retried = True
+            self.after(3000, lambda: self._check_update_async(force=True))
 
     def _on_engine_stopped(self):
         if not self._running:
@@ -1110,7 +1160,144 @@ class HenkerDPIApp(ctk.CTk):
         self._log_widget.delete("1.0", "end")
         self._log_widget.config(state="disabled")
 
+    # === Updates ===
+
+    def _check_update_async(self, force: bool = False):
+        """Look for a newer release off the UI thread; stay silent on failure.
+
+        Runs once at startup and again when the bypass is switched on: if the
+        ISP blocks GitHub, the first attempt fails and the second — now going
+        through the bypass — usually succeeds. updater throttles to one real
+        request per day, so the extra call costs nothing.
+        """
+        if self._update_busy or self._update_info:
+            return
+        if not self._settings.get("update_check_enabled", True):
+            return
+        if not updater.due_for_check(force):
+            return
+
+        def worker():
+            info = updater.check_for_update(force)
+            self.after(0, lambda: self._on_update_checked(info, force))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_update_checked(self, info, forced=False):
+        if not info:
+            if forced:
+                self._log_queue.put(t("update_none", self._lang))
+            return
+        if not forced and updater.is_skipped(info.version):
+            return
+        self._update_info = info
+        self._show_update_bar(t("update_available", self._lang).format(
+            version=info.version))
+        self._update_btn.configure(text=t("update_button", self._lang),
+                                   state="normal")
+        self._update_notes.configure(text=t("update_notes", self._lang))
+        self._update_close.configure(state="normal")
+
+    def _show_update_bar(self, message: str):
+        self._update_msg.configure(text=message)
+        if not self._update_bar.winfo_ismapped():
+            # Directly under the header, above everything else.
+            self._update_bar.pack(fill="x", after=self._header)
+
+    def _hide_update_bar(self):
+        if self._update_bar.winfo_ismapped():
+            self._update_bar.pack_forget()
+
+    def _open_release_notes(self):
+        if self._update_info:
+            webbrowser.open(self._update_info.notes_url)
+
+    def _dismiss_update(self):
+        """Hide the banner and stay quiet until a version newer than this one."""
+        if self._update_busy:
+            return
+        if self._update_info:
+            updater.skip_version(self._update_info.version)
+        self._update_info = None
+        self._hide_update_bar()
+
+    def _do_update(self):
+        if self._update_busy or not self._update_info:
+            return
+        if not updater.is_frozen():
+            # Running from source: nothing to swap, just show the release.
+            self._open_release_notes()
+            return
+
+        info = self._update_info
+        self._update_busy = True
+        self._update_btn.configure(state="disabled")
+        self._update_close.configure(state="disabled")
+
+        # Stop the engine FIRST and on the UI thread: BypassEngine.stop()
+        # restores the system DNS and closes the WinDivert handles. Replacing
+        # the exe while it still owns them would leave the user pinned to a
+        # public resolver with the journal's owning process gone.
+        if self._running:
+            self._show_update_bar(t("update_stopping", self._lang))
+            self._stop()
+
+        def worker():
+            try:
+                def on_progress(done, total):
+                    pct = int(done * 100 / total) if total else 0
+                    self.after(0, lambda: self._show_update_bar(
+                        t("update_downloading", self._lang).format(pct=pct)))
+
+                path = updater.download_update(info, progress=on_progress)
+                self.after(0, lambda: self._show_update_bar(
+                    t("update_verifying", self._lang)))
+                updater.apply_update(path)
+                self.after(0, self._finish_update)
+            except Exception as e:
+                self.after(0, lambda: self._update_failed(e))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_update(self):
+        self._show_update_bar(t("update_restarting", self._lang))
+        self._hide_tray()
+        try:
+            _release_single_instance()   # let the new process take the mutex
+            updater.relaunch()
+        except Exception as e:
+            self._update_failed(e)
+            return
+        self.after(400, self.destroy)
+
+    def _update_failed(self, err):
+        self._update_busy = False
+        self._log_queue.put(f"[!] {t('update_failed', self._lang)}: {err}")
+        self._show_update_bar(t("update_failed", self._lang))
+        self._update_btn.configure(state="normal",
+                                   text=t("update_button", self._lang))
+        self._update_close.configure(state="normal")
+
     # === Autostart ===
+
+    def _migrate_legacy_autostart(self) -> bool:
+        """Remove the pre-rename 'HenkerDPI_V2' logon task.
+
+        Returns True if one existed, so the caller can re-register it under the
+        current name — otherwise upgrading users silently lose autostart.
+        """
+        legacy = "HenkerDPI_V2"
+        try:
+            r = subprocess.run(["schtasks", "/query", "/tn", legacy],
+                               capture_output=True, text=True,
+                               creationflags=_CF)
+            if r.returncode != 0:
+                return False
+            subprocess.run(["schtasks", "/delete", "/tn", legacy, "/f"],
+                           capture_output=True, creationflags=_CF)
+            return True
+        except Exception:
+            return False
 
     def _check_autostart(self):
         """Reflect autostart state, treating a task that points elsewhere as OFF.
@@ -1121,12 +1308,17 @@ class HenkerDPIApp(ctk.CTk):
         autostart, so compare the task's action against the current target and
         re-register when they differ.
         """
+        had_legacy = self._migrate_legacy_autostart()
         try:
             r = subprocess.run(
                 ["schtasks", "/query", "/tn", SERVICE_NAME, "/fo", "list", "/v"],
                 capture_output=True, text=True, encoding="utf-8",
                 errors="replace", creationflags=_CF)
             if r.returncode != 0:
+                if had_legacy:
+                    # Carry the old "start on boot" choice over to the new name.
+                    self._auto_var.set(True)
+                    self._toggle_auto()
                 return
             # Locale-independent: match the exe path itself, not the field label
             # (a Turkish Windows prints "Görev Yolu", not "Task To Run").
@@ -1176,7 +1368,7 @@ class HenkerDPIApp(ctk.CTk):
             pystray.MenuItem(t("tray_quit", self._lang),
                              lambda *a: self.after(0, self._quit)),
         )
-        return pystray.Icon("HenkerDPI_V2", img, "HenkerDPI V2", menu)
+        return pystray.Icon("HenkerDPI", img, "HenkerDPI", menu)
 
     def _show_tray(self):
         if not HAS_TRAY or self._tray_icon:
@@ -1210,7 +1402,7 @@ class HenkerDPIApp(ctk.CTk):
             self._show_tray()
             return
         if self._running:
-            if messagebox.askyesno("HenkerDPI V2", t("close_confirm", self._lang)):
+            if messagebox.askyesno("HenkerDPI", t("close_confirm", self._lang)):
                 self._quit()
         else:
             self._quit()
@@ -1221,19 +1413,51 @@ class HenkerDPIApp(ctk.CTk):
         self.destroy()
 
 
+_MUTEX_NAME = "Global\\HenkerDPI_SingleInstance"
+_mutex_handle = None
+
+
+def _release_single_instance():
+    """Drop the single-instance mutex so a relaunched build can claim it.
+
+    Called only on the update path: the replacement process starts while this
+    one is still alive, and would otherwise bounce off its own guard.
+    """
+    global _mutex_handle
+    import ctypes as ct
+    h, _mutex_handle = _mutex_handle, None
+    if h:
+        try:
+            ct.windll.kernel32.ReleaseMutex(h)
+            ct.windll.kernel32.CloseHandle(h)
+        except Exception:
+            pass
+
+
 def main():
     import ctypes as ct
+    global _mutex_handle
 
     # Global\ so the guard also blocks a second ELEVATED instance in another
     # user session (Fast User Switching) — both would otherwise race the same
     # machine-wide DNS journal. Admin token carries SeCreateGlobalPrivilege.
-    mutex = ct.windll.kernel32.CreateMutexW(None, True, "Global\\HenkerDPI_V2_SingleInstance")
-    if ct.windll.kernel32.GetLastError() == 183:
-        messagebox.showinfo("HenkerDPI V2", t("already_running"))
-        sys.exit(0)
+    # After an update the outgoing process may still be exiting, so --updated
+    # waits for it rather than reporting a false "already running".
+    deadline = time.time() + (15 if "--updated" in sys.argv else 0)
+    while True:
+        _mutex_handle = ct.windll.kernel32.CreateMutexW(None, True, _MUTEX_NAME)
+        if ct.windll.kernel32.GetLastError() != 183:
+            break
+        if _mutex_handle:
+            ct.windll.kernel32.CloseHandle(_mutex_handle)
+            _mutex_handle = None
+        if time.time() >= deadline:
+            messagebox.showinfo("HenkerDPI", t("already_running"))
+            sys.exit(0)
+        time.sleep(0.5)
 
     if not is_admin():
-        messagebox.showerror("HenkerDPI V2", t("admin_required"))
+        messagebox.showerror("HenkerDPI", t("admin_required"))
         sys.exit(1)
 
     ct.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Henkerr.HenkerDPI.V2")

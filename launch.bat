@@ -1,5 +1,5 @@
 @echo off
-:: HenkerDPI V2 — Admin olarak başlat
+:: HenkerDPI — Admin olarak başlat
 cd /d "%~dp0"
 net session >nul 2>&1
 if %errorlevel% neq 0 (

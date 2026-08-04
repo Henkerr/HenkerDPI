@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-HenkerDPI V2 is licensed under the MIT License (see `LICENSE`). It bundles and
+HenkerDPI is licensed under the MIT License (see `LICENSE`). It bundles and
 depends on the following third-party components, whose own licenses apply to
 those components.
 
@@ -20,7 +20,7 @@ WinDivert is used unmodified, as a dynamically loaded library (`WinDivert64.dll`
 via pydivert's ctypes bindings. As required by LGPL v3 §4, you may replace it with
 a modified version: extract the onefile executable (or build from source with
 `pip install -r requirements.txt -r requirements-build.txt` and
-`python -m PyInstaller HenkerDPI_V2.spec`) and substitute your own
+`python -m PyInstaller HenkerDPI.spec`) and substitute your own
 `WinDivert64.dll` / `WinDivert64.sys`. HenkerDPI's own source is MIT and published
 in full at https://github.com/Henkerr/HenkerDPI-V2, so relinking is unrestricted.
 

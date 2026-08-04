@@ -1,5 +1,5 @@
 """
-HenkerDPI V2 - DPI Bypass Engine
+HenkerDPI - DPI Bypass Engine
 General-purpose: all sites or selected categories.
 TTL-based fake packet + reverse TCP fragmentation + DoH.
 """
@@ -334,9 +334,9 @@ if __name__ == "__main__":
     # Single-instance guard sharing the GUI's machine-wide mutex name, so a
     # standalone `python main.py` engine cannot run alongside the GUI's engine
     # and race the shared DNS journal. Global\ also blocks another user session.
-    _mx = ctypes.windll.kernel32.CreateMutexW(None, True, "Global\\HenkerDPI_V2_SingleInstance")
+    _mx = ctypes.windll.kernel32.CreateMutexW(None, True, "Global\\HenkerDPI_SingleInstance")
     if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
-        print("HenkerDPI V2 is already running.")
+        print("HenkerDPI is already running.")
         sys.exit(0)
 
     # Heal DNS left pinned by a previous crashed/force-killed run before starting.

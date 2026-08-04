@@ -1,5 +1,5 @@
 """
-HenkerDPI V2 - DPI Bypass Strategies
+HenkerDPI - DPI Bypass Strategies
 TTL-based fake packet + reverse TCP fragmentation.
 General-purpose — all sites or selected domains.
 """

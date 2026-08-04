@@ -1,11 +1,21 @@
 """
-HenkerDPI V2 - Configuration
+HenkerDPI - Configuration
 General-purpose DPI bypass. All sites or category-based filtering.
 """
 
 import json
 import os
 import sys
+
+# Single source of truth for the running build's version. Keep in sync with
+# version_info.txt (FileVersion) and setup.iss (AppVersion) when releasing —
+# updater.py compares this against the latest GitHub release tag.
+APP_VERSION = "2.4.0"
+
+# Repository the updater queries. Both are validated at download time so a
+# tampered API response cannot point the downloader at an arbitrary host.
+GITHUB_REPO = "Henkerr/HenkerDPI-V2"
+RELEASE_ASSET_NAME = "HenkerDPI.exe"
 
 # PyInstaller onefile: __file__ points inside the ephemeral _MEIxxxx temp dir
 # Windows deletes on exit, so the exe's own directory is the pre-2.3 anchor.
@@ -224,6 +234,9 @@ def _default_settings():
         # proven, drop-free one; enable only if IPv6-reachable sites open
         # inconsistently. Toggle by editing settings.json (no GUI switch).
         "ipv6_bypass_enabled": False,
+        # Ask GitHub once a day whether a newer release exists. Set False to
+        # stop the app making any outbound request of its own.
+        "update_check_enabled": True,
     }
 
 

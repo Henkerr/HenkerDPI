@@ -1,6 +1,6 @@
 <div align="center">
 
-# HenkerDPI V2
+# HenkerDPI
 
 **General-purpose DPI bypass for Windows**
 
@@ -49,9 +49,17 @@ By default HenkerDPI bypasses **IPv4 traffic only** — the proven, drop-free pa
 
 ## Installation
 
-### Windows — Download (Recommended)
+### Installer (Recommended)
 
-Download the latest **`HenkerDPI_V2.exe`** from [Releases](../../releases) and run it **as Administrator** (right-click → *Run as administrator*). It is a single portable executable — no installation required; the WinDivert driver is bundled inside.
+Download **`HenkerDPI_Setup.exe`** from [Releases](../../releases) and run it. It installs to Program Files, creates Start-menu and desktop shortcuts, and launches the app — nothing else to configure. Uninstall from *Settings → Apps* like any other program.
+
+### Portable
+
+Prefer a single file? Download **`HenkerDPI.exe`** from the same release and run it **as Administrator** (right-click → *Run as administrator*). No installation; the WinDivert driver is bundled inside.
+
+### Updates
+
+From 2.4.0 on, HenkerDPI checks GitHub once a day and shows a banner when a newer release exists. One click downloads it, verifies its SHA-256 against the digest GitHub publishes for the asset, swaps the executable and restarts. Turn it off with `"update_check_enabled": false` in `%LOCALAPPDATA%\HenkerDPI\settings.json` if you would rather update by hand.
 
 > **SmartScreen & Antivirus:** the exe is unsigned and injects packets via a kernel driver, so Windows SmartScreen may show *"Windows protected your PC"* on first run — click **More info → Run anyway**. Some antivirus engines also flag DPI-bypass tools as potentially unwanted; this is a false positive. If you prefer, build it yourself from source (below) or scan the exe on [VirusTotal](https://www.virustotal.com).
 
@@ -68,8 +76,8 @@ python gui.py  # Must run as Administrator
 
 ```bash
 pip install -r requirements.txt -r requirements-build.txt
-python -m PyInstaller HenkerDPI_V2.spec --clean -y
-# Output: dist/HenkerDPI_V2.exe (FileVersion 2.3.0.0, admin-manifested, WinDivert bundled)
+python -m PyInstaller HenkerDPI.spec --clean -y
+# Output: dist/HenkerDPI.exe (FileVersion 2.4.0.0, admin-manifested, WinDivert bundled)
 ```
 
 ### Build Installer (Windows)
@@ -78,7 +86,7 @@ Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 
 ```bash
 ISCC.exe setup.iss
-# Output: installer/HenkerDPI_V2_Setup.exe
+# Output: installer/HenkerDPI_Setup.exe
 ```
 
 ## Requirements
@@ -118,7 +126,7 @@ python main.py -v        # Verbose mode (log every bypass)
 **Installer build:** uninstall from *Settings → Apps* (or *Add/Remove Programs*). This stops the app, removes the autostart task, and deletes its settings.
 
 **Portable / source:**
-1. Turn autostart off in the app (or run `schtasks /delete /tn HenkerDPI_V2 /f` as Administrator).
+1. Turn autostart off in the app (or run `schtasks /delete /tn HenkerDPI /f` as Administrator).
 2. Close the app — it restores your original DNS on exit.
 3. Delete the exe / repo folder and the DNS journal folder at `%LOCALAPPDATA%\HenkerDPI\`.
 
@@ -139,8 +147,9 @@ HenkerDPI-V2/
 ├── config.py          — Categories, resolvers, settings + state-dir management
 ├── doh.py             — Secure DNS manager: crash-safe resolver switching (netsh/PowerShell)
 ├── lang.py            — Multi-language support (8 languages)
+├── updater.py         — GitHub release check, verified download, in-place swap
 ├── licenses/          — LGPL/GPL texts for the bundled third-party components
-├── HenkerDPI_V2.spec  — PyInstaller build definition
+├── HenkerDPI.spec  — PyInstaller build definition
 └── setup.iss          — Inno Setup installer script
 ```
 
