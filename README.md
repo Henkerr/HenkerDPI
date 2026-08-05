@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="icon.png" width="128" alt="HenkerDPI">
+
 # HenkerDPI
 
 **General-purpose DPI bypass for Windows**
@@ -7,6 +9,10 @@
 [![Windows](https://img.shields.io/badge/Windows-10%2F11-blue?logo=windows)](https://github.com/Henkerr/HenkerDPI)
 [![Python](https://img.shields.io/badge/python-3.10%2B-yellow?logo=python)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+### [⬇ Download HenkerDPI Setup](https://github.com/Henkerr/HenkerDPI/releases/latest/download/HenkerDPI_Setup.exe)
+
+<sub>Windows 10/11 64-bit · installs in one click · updates itself from then on</sub>
 
 </div>
 
