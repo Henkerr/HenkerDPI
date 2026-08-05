@@ -14,7 +14,7 @@
 
 <sub>Windows 10/11 64-bit · installs in one click · updates itself from then on</sub>
 
-<sub>Not a developer? Use the [download page](https://henkerr.github.io/HenkerDPI/) instead — it has install steps in Turkish.</sub>
+<sub>Or use the [download page](https://henkerr.github.io/HenkerDPI/) — one button, with the install steps.</sub>
 
 </div>
 
