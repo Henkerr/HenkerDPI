@@ -156,9 +156,13 @@ HenkerDPI/
 ├── doh.py             — Secure DNS manager: crash-safe resolver switching (netsh/PowerShell)
 ├── lang.py            — Multi-language support (8 languages)
 ├── updater.py         — GitHub release check, verified download, in-place swap
+├── launch.bat         — run from source, self-elevating (dev convenience)
+├── HenkerDPI.spec     — PyInstaller build definition
+├── setup.iss          — Inno Setup installer script
 ├── licenses/          — LGPL/GPL texts for the bundled third-party components
-├── HenkerDPI.spec  — PyInstaller build definition
-└── setup.iss          — Inno Setup installer script
+├── docs/              — the download page at henkerr.github.io/HenkerDPI
+├── assets/            — GitHub social-preview card
+└── tools/             — scripts that regenerate the logo and the social card
 ```
 
 Preferences (`settings.json`, `custom_domains.json`, `lang_pref.json`,
