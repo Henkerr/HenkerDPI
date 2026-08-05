@@ -21,3 +21,6 @@ installer/
 
 # Logo working files (kept locally, not published)
 logo/_*
+tools/wolf_mark.png
+tools/wolf_mark.ico
+tools/wolf_mark_sizes.png
