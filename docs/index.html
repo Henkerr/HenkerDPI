@@ -17,11 +17,23 @@
   *{box-sizing:border-box}
   body{
     margin:0; background:var(--bg); color:var(--fg);
-    font:16px/1.65 "Segoe UI",system-ui,-apple-system,sans-serif;
+    /* Per-script fallbacks so Japanese, Chinese and Devanagari render with a
+       real face instead of tofu on machines without a broad Unicode default. */
+    font:16px/1.65 "Segoe UI","Yu Gothic UI","Microsoft YaHei","Nirmala UI",
+         system-ui,-apple-system,sans-serif;
     padding:60px 20px 48px;
     background-image:radial-gradient(circle at 50% -12%, #1a2949 0%, transparent 55%);
   }
   .wrap{max-width:600px;margin:0 auto}
+
+  #lang{
+    position:fixed;top:16px;right:16px;z-index:10;
+    background:var(--card);color:var(--fg2);
+    border:1px solid var(--border);border-radius:8px;
+    padding:7px 10px;font-size:13.5px;font-family:inherit;cursor:pointer;
+  }
+  #lang:hover{color:var(--fg);border-color:#33363d}
+
   .hero{text-align:center}
   img.logo{width:128px;height:128px;filter:drop-shadow(0 8px 28px rgba(77,139,255,.30))}
   h1{font-size:46px;margin:20px 0 4px;letter-spacing:-.8px}
@@ -35,9 +47,7 @@
   .dl:hover{background:#3f7cf0;transform:translateY(-2px)}
   .meta{color:var(--fg3);font-size:13.5px;margin-top:13px}
 
-  .points{
-    display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:46px 0 0;
-  }
+  .points{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:46px}
   .pt{
     background:var(--card);border:1px solid var(--border);border-radius:12px;
     padding:18px 16px;text-align:center;
@@ -55,9 +65,7 @@
   ol li{margin-bottom:10px}
   ol li:last-child{margin-bottom:0}
   b{color:var(--fg);font-weight:600}
-  .warn{
-    background:#1a1508;border-color:#3d3115;color:#d5c7a3;font-size:14.5px;
-  }
+  .warn{background:#1a1508;border-color:#3d3115;color:#d5c7a3;font-size:14.5px}
   .warn h2{color:#bda877}
   .warn b{color:#f0dcae}
   p.note{color:var(--fg3);font-size:14px;text-align:center;margin:26px auto 0}
@@ -67,65 +75,255 @@
   @media (max-width:520px){
     .points{grid-template-columns:1fr}
     h1{font-size:38px}
-    body{padding-top:44px}
+    body{padding-top:52px}
   }
 </style>
 </head>
 <body>
+
+<select id="lang" aria-label="Language"></select>
+
 <div class="wrap">
 
   <div class="hero">
     <img class="logo" src="icon.png" alt="HenkerDPI">
     <h1>HenkerDPI</h1>
-    <p class="tag">DPI bypass for Windows</p>
-    <p class="lede">
-      Open blocked websites without a VPN. HenkerDPI reshapes the TLS handshake
-      your ISP inspects, right on your own machine — nothing is routed through a
-      remote server, so your connection keeps the speed it already had.
-    </p>
+    <p class="tag" data-t="tagline"></p>
+    <p class="lede" data-t="lede"></p>
 
     <a class="dl" href="https://github.com/Henkerr/HenkerDPI/releases/latest/download/HenkerDPI_Setup.exe">
-      ⬇ &nbsp;Download
+      ⬇ &nbsp;<span data-t="download"></span>
     </a>
-    <p class="meta">Windows 10/11 (64-bit) · 29 MB · free and open source</p>
+    <p class="meta" data-t="meta"></p>
   </div>
 
   <div class="points">
-    <div class="pt"><b>No account</b><span>No sign-up, no subscription, no server to trust.</span></div>
-    <div class="pt"><b>No setup</b><span>Works on every site the moment you switch it on.</span></div>
-    <div class="pt"><b>Stays current</b><span>New versions install themselves.</span></div>
+    <div class="pt"><b data-t="p1h"></b><span data-t="p1b"></span></div>
+    <div class="pt"><b data-t="p2h"></b><span data-t="p2b"></span></div>
+    <div class="pt"><b data-t="p3h"></b><span data-t="p3b"></span></div>
   </div>
 
   <section>
-    <h2>Install</h2>
+    <h2 data-t="installh"></h2>
     <ol>
-      <li>Download the installer and run it.</li>
-      <li>Approve the Windows administrator prompt.</li>
-      <li>Press the power button in the app. You're protected.</li>
+      <li data-t="s1"></li>
+      <li data-t="s2"></li>
+      <li data-t="s3"></li>
     </ol>
   </section>
 
   <section class="warn">
-    <h2>If Windows warns you</h2>
-    HenkerDPI is not code-signed, so SmartScreen may show
-    <i>"Windows protected your PC"</i> the first time you run it. Choose
-    <b>More info → Run anyway</b>. Some antivirus engines flag DPI-bypass tools
-    by category as well — it is a false positive. Every release publishes its
-    SHA-256, and the full source is public if you would rather build it yourself.
+    <h2 data-t="warnh"></h2>
+    <span data-t="warn"></span>
   </section>
 
   <p class="note">
-    Prefer no installer? Download the
-    <a href="https://github.com/Henkerr/HenkerDPI/releases/latest/download/HenkerDPI.exe">portable version</a>
-    and run it as administrator.
+    <span data-t="portable1"></span>
+    <a href="https://github.com/Henkerr/HenkerDPI/releases/latest/download/HenkerDPI.exe" data-t="portablelink"></a><span data-t="portable2"></span>
   </p>
 
   <footer>
-    MIT licensed ·
-    <a href="https://github.com/Henkerr/HenkerDPI">Source on GitHub</a> ·
-    <a href="https://github.com/Henkerr/HenkerDPI/releases">All releases</a>
+    <span data-t="license"></span> ·
+    <a href="https://github.com/Henkerr/HenkerDPI" data-t="source"></a> ·
+    <a href="https://github.com/Henkerr/HenkerDPI/releases" data-t="releases"></a>
   </footer>
 
 </div>
+
+<script>
+const NAMES = {en:"English", tr:"Türkçe", de:"Deutsch", ru:"Русский",
+               ja:"日本語", zh:"中文", hi:"हिन्दी", da:"Dansk"};
+
+const T = {
+en:{
+ title:"HenkerDPI — DPI bypass for Windows",
+ tagline:"DPI bypass for Windows",
+ lede:"Open blocked websites without a VPN. HenkerDPI reshapes the TLS handshake your ISP inspects, right on your own machine — nothing is routed through a remote server, so your connection keeps the speed it already had.",
+ download:"Download",
+ meta:"Windows 10/11 (64-bit) · 29 MB · free and open source",
+ p1h:"No account", p1b:"No sign-up, no subscription, no server to trust.",
+ p2h:"No setup", p2b:"Works on every site the moment you switch it on.",
+ p3h:"Stays current", p3b:"New versions install themselves.",
+ installh:"Install",
+ s1:"Download the installer and run it.",
+ s2:"Approve the Windows administrator prompt.",
+ s3:"Press the power button in the app. You're protected.",
+ warnh:"If Windows warns you",
+ warn:"HenkerDPI is not code-signed, so SmartScreen may show <i>\"Windows protected your PC\"</i> the first time you run it. Choose <b>More info → Run anyway</b>. Some antivirus engines flag DPI-bypass tools by category as well — it is a false positive. Every release publishes its SHA-256, and the full source is public if you would rather build it yourself.",
+ portable1:"Prefer no installer? Download the ", portablelink:"portable version",
+ portable2:" and run it as administrator.",
+ license:"MIT licensed", source:"Source on GitHub", releases:"All releases"
+},
+tr:{
+ title:"HenkerDPI — Windows için DPI bypass",
+ tagline:"Windows için DPI bypass",
+ lede:"Engellenen sitelere VPN olmadan gir. HenkerDPI, servis sağlayıcının incelediği TLS el sıkışmasını doğrudan kendi bilgisayarında yeniden düzenler — trafiğin uzak bir sunucudan geçmediği için bağlantın mevcut hızını korur.",
+ download:"İndir",
+ meta:"Windows 10/11 (64-bit) · 29 MB · ücretsiz ve açık kaynak",
+ p1h:"Hesap yok", p1b:"Kayıt yok, abonelik yok, güvenmen gereken sunucu yok.",
+ p2h:"Ayar yok", p2b:"Açtığın anda bütün sitelerde çalışır.",
+ p3h:"Güncel kalır", p3b:"Yeni sürümler kendi kurulur.",
+ installh:"Kurulum",
+ s1:"Kurulum dosyasını indir ve çalıştır.",
+ s2:"Windows'un yönetici iznini onayla.",
+ s3:"Uygulamadaki güç düğmesine bas. Koruma başlar.",
+ warnh:"Windows uyarı gösterirse",
+ warn:"HenkerDPI dijital olarak imzalanmadığı için SmartScreen ilk çalıştırmada <i>\"Windows bilgisayarınızı korudu\"</i> diyebilir. <b>Ek bilgi → Yine de çalıştır</b> seç. Bazı antivirüsler DPI bypass araçlarını kategori olarak işaretler; bu yanlış pozitiftir. Her sürümün SHA-256 değeri yayınlanır ve kaynak kod açıktır — istersen kendin derleyebilirsin.",
+ portable1:"Kurulum istemiyor musun? ", portablelink:"Taşınabilir sürümü",
+ portable2:" indirip yönetici olarak çalıştır.",
+ license:"MIT lisanslı", source:"GitHub'da kaynak kod", releases:"Tüm sürümler"
+},
+de:{
+ title:"HenkerDPI — DPI-Umgehung für Windows",
+ tagline:"DPI-Umgehung für Windows",
+ lede:"Öffne gesperrte Websites ohne VPN. HenkerDPI verändert den TLS-Handshake, den dein Anbieter mitliest, direkt auf deinem eigenen Rechner — nichts läuft über einen fremden Server, deine Verbindung behält also ihr Tempo.",
+ download:"Herunterladen",
+ meta:"Windows 10/11 (64-Bit) · 29 MB · kostenlos und quelloffen",
+ p1h:"Kein Konto", p1b:"Keine Anmeldung, kein Abo, kein Server, dem du vertrauen musst.",
+ p2h:"Keine Einrichtung", p2b:"Wirkt auf allen Seiten, sobald du es einschaltest.",
+ p3h:"Bleibt aktuell", p3b:"Neue Versionen installieren sich selbst.",
+ installh:"Installation",
+ s1:"Installationsdatei herunterladen und starten.",
+ s2:"Die Administratorabfrage von Windows bestätigen.",
+ s3:"Im Programm auf den Ein-Schalter drücken. Fertig.",
+ warnh:"Wenn Windows warnt",
+ warn:"HenkerDPI ist nicht signiert, daher zeigt SmartScreen beim ersten Start eventuell <i>„Der Computer wurde durch Windows geschützt“</i>. Wähle <b>Weitere Informationen → Trotzdem ausführen</b>. Manche Virenscanner melden DPI-Werkzeuge grundsätzlich — ein Fehlalarm. Zu jeder Version wird der SHA-256 veröffentlicht, und der Quellcode ist offen, falls du lieber selbst baust.",
+ portable1:"Lieber ohne Installation? Lade die ", portablelink:"portable Version",
+ portable2:" herunter und führe sie als Administrator aus.",
+ license:"MIT-Lizenz", source:"Quellcode auf GitHub", releases:"Alle Versionen"
+},
+ru:{
+ title:"HenkerDPI — обход DPI для Windows",
+ tagline:"Обход DPI для Windows",
+ lede:"Открывайте заблокированные сайты без VPN. HenkerDPI меняет TLS-рукопожатие, которое проверяет провайдер, прямо на вашем компьютере — трафик не идёт через чужой сервер, поэтому скорость соединения остаётся прежней.",
+ download:"Скачать",
+ meta:"Windows 10/11 (64-бит) · 29 МБ · бесплатно, открытый код",
+ p1h:"Без аккаунта", p1b:"Ни регистрации, ни подписки, ни сервера, которому надо доверять.",
+ p2h:"Без настройки", p2b:"Работает на всех сайтах сразу после включения.",
+ p3h:"Обновляется сам", p3b:"Новые версии устанавливаются автоматически.",
+ installh:"Установка",
+ s1:"Скачайте установщик и запустите его.",
+ s2:"Подтвердите запрос прав администратора.",
+ s3:"Нажмите кнопку питания в приложении. Готово.",
+ warnh:"Если Windows предупредит",
+ warn:"HenkerDPI не подписан цифровой подписью, поэтому при первом запуске SmartScreen может показать <i>«Система Windows защитила ваш компьютер»</i>. Выберите <b>Подробнее → Выполнить в любом случае</b>. Некоторые антивирусы помечают инструменты обхода DPI по категории — это ложное срабатывание. Для каждой версии публикуется SHA-256, а исходный код открыт, если вы предпочитаете собрать сами.",
+ portable1:"Не хотите установщик? Скачайте ", portablelink:"портативную версию",
+ portable2:" и запустите от имени администратора.",
+ license:"Лицензия MIT", source:"Исходный код на GitHub", releases:"Все версии"
+},
+ja:{
+ title:"HenkerDPI — Windows 向け DPI 回避ツール",
+ tagline:"Windows 向け DPI 回避ツール",
+ lede:"VPN なしでブロックされたサイトを開けます。HenkerDPI は、プロバイダが検査する TLS ハンドシェイクをあなたの PC 上で組み替えます。通信を外部サーバー経由にしないため、回線速度はそのままです。",
+ download:"ダウンロード",
+ meta:"Windows 10/11（64ビット）· 29 MB · 無料・オープンソース",
+ p1h:"アカウント不要", p1b:"登録も月額料金も、信頼すべきサーバーもありません。",
+ p2h:"設定不要", p2b:"オンにした瞬間からすべてのサイトで機能します。",
+ p3h:"自動で最新に", p3b:"新しいバージョンは自動でインストールされます。",
+ installh:"インストール",
+ s1:"インストーラーをダウンロードして実行します。",
+ s2:"Windows の管理者確認を承認します。",
+ s3:"アプリの電源ボタンを押します。これで保護されます。",
+ warnh:"Windows が警告を表示したら",
+ warn:"HenkerDPI はコード署名されていないため、初回起動時に SmartScreen が <i>「Windows によって PC が保護されました」</i> と表示することがあります。<b>詳細情報 → 実行</b> を選んでください。一部のウイルス対策ソフトは DPI 回避ツールを一律に検出しますが、これは誤検出です。各リリースでは SHA-256 を公開しており、ソースコードも公開されているため、自分でビルドすることもできます。",
+ portable1:"インストーラーを使わない場合は", portablelink:"ポータブル版",
+ portable2:"をダウンロードし、管理者として実行してください。",
+ license:"MIT ライセンス", source:"GitHub のソースコード", releases:"すべてのリリース"
+},
+zh:{
+ title:"HenkerDPI — Windows 上的 DPI 绕过工具",
+ tagline:"Windows 上的 DPI 绕过工具",
+ lede:"无需 VPN 即可打开被屏蔽的网站。HenkerDPI 在你自己的电脑上重组运营商检查的 TLS 握手包——流量不经过任何远程服务器，因此连接速度保持不变。",
+ download:"下载",
+ meta:"Windows 10/11（64 位）· 29 MB · 免费开源",
+ p1h:"无需账号", p1b:"不注册、不订阅，也没有需要信任的服务器。",
+ p2h:"无需配置", p2b:"开启后立即对所有网站生效。",
+ p3h:"自动更新", p3b:"新版本会自行安装。",
+ installh:"安装",
+ s1:"下载安装程序并运行。",
+ s2:"在 Windows 管理员提示中点击允许。",
+ s3:"点击应用中的电源按钮，即可开始保护。",
+ warnh:"如果 Windows 弹出警告",
+ warn:"HenkerDPI 未经代码签名，首次运行时 SmartScreen 可能显示 <i>“Windows 已保护你的电脑”</i>。请选择 <b>更多信息 → 仍要运行</b>。部分杀毒软件会按类别标记 DPI 绕过工具，这是误报。每个版本都会公布 SHA-256，源代码完全公开，你也可以自行编译。",
+ portable1:"不想用安装程序？下载", portablelink:"便携版",
+ portable2:"并以管理员身份运行。",
+ license:"MIT 许可证", source:"GitHub 源代码", releases:"全部版本"
+},
+hi:{
+ title:"HenkerDPI — Windows के लिए DPI बायपास",
+ tagline:"Windows के लिए DPI बायपास",
+ lede:"बिना VPN के ब्लॉक की गई वेबसाइटें खोलें। HenkerDPI आपके अपने कंप्यूटर पर ही उस TLS हैंडशेक को बदल देता है जिसे आपका ISP जाँचता है — ट्रैफ़िक किसी बाहरी सर्वर से नहीं गुज़रता, इसलिए आपकी स्पीड वैसी ही रहती है।",
+ download:"डाउनलोड करें",
+ meta:"Windows 10/11 (64-बिट) · 29 MB · मुफ़्त और ओपन सोर्स",
+ p1h:"अकाउंट नहीं", p1b:"न रजिस्ट्रेशन, न सब्सक्रिप्शन, न किसी सर्वर पर भरोसा।",
+ p2h:"सेटअप नहीं", p2b:"चालू करते ही हर वेबसाइट पर काम करता है।",
+ p3h:"खुद अपडेट", p3b:"नए वर्ज़न अपने आप इंस्टॉल हो जाते हैं।",
+ installh:"इंस्टॉल करें",
+ s1:"इंस्टॉलर डाउनलोड करें और चलाएँ।",
+ s2:"Windows की एडमिनिस्ट्रेटर अनुमति स्वीकार करें।",
+ s3:"ऐप में पावर बटन दबाएँ। सुरक्षा शुरू।",
+ warnh:"अगर Windows चेतावनी दिखाए",
+ warn:"HenkerDPI कोड-साइन नहीं है, इसलिए पहली बार चलाने पर SmartScreen <i>\"Windows protected your PC\"</i> दिखा सकता है। <b>More info → Run anyway</b> चुनें। कुछ एंटीवायरस DPI बायपास टूल्स को श्रेणी के आधार पर फ़्लैग करते हैं — यह ग़लत अलार्म है। हर रिलीज़ का SHA-256 प्रकाशित होता है और सोर्स कोड खुला है, आप चाहें तो खुद बिल्ड कर सकते हैं।",
+ portable1:"इंस्टॉलर नहीं चाहिए? ", portablelink:"पोर्टेबल वर्ज़न",
+ portable2:" डाउनलोड करें और एडमिनिस्ट्रेटर के रूप में चलाएँ।",
+ license:"MIT लाइसेंस", source:"GitHub पर सोर्स कोड", releases:"सभी रिलीज़"
+},
+da:{
+ title:"HenkerDPI — DPI-omgåelse til Windows",
+ tagline:"DPI-omgåelse til Windows",
+ lede:"Åbn blokerede websider uden VPN. HenkerDPI omformer det TLS-håndtryk, din udbyder kigger på, direkte på din egen maskine — intet sendes gennem en fremmed server, så din forbindelse beholder sin hastighed.",
+ download:"Hent",
+ meta:"Windows 10/11 (64-bit) · 29 MB · gratis og open source",
+ p1h:"Ingen konto", p1b:"Ingen tilmelding, intet abonnement, ingen server du skal stole på.",
+ p2h:"Ingen opsætning", p2b:"Virker på alle sider, så snart du tænder for det.",
+ p3h:"Holder sig opdateret", p3b:"Nye versioner installerer sig selv.",
+ installh:"Installation",
+ s1:"Hent installationsfilen, og kør den.",
+ s2:"Godkend Windows' administratorprompt.",
+ s3:"Tryk på tænd-knappen i appen. Så er du beskyttet.",
+ warnh:"Hvis Windows advarer dig",
+ warn:"HenkerDPI er ikke kodesigneret, så SmartScreen kan vise <i>\"Windows protected your PC\"</i>, første gang du kører det. Vælg <b>More info → Run anyway</b>. Nogle antivirusprogrammer markerer DPI-værktøjer som kategori — det er en falsk alarm. Hver udgivelse offentliggør sin SHA-256, og kildekoden er åben, hvis du hellere selv vil bygge.",
+ portable1:"Vil du helst undgå installationsfilen? Hent ", portablelink:"den bærbare version",
+ portable2:", og kør den som administrator.",
+ license:"MIT-licens", source:"Kildekode på GitHub", releases:"Alle udgivelser"
+}
+};
+
+const sel = document.getElementById("lang");
+for (const code in NAMES) {
+  const o = document.createElement("option");
+  o.value = code; o.textContent = NAMES[code];
+  sel.appendChild(o);
+}
+
+function apply(code){
+  const d = T[code] || T.en;
+  document.documentElement.lang = code;
+  document.title = d.title;
+  document.querySelectorAll("[data-t]").forEach(el => {
+    const v = d[el.dataset.t];
+    // Strings carry only our own markup (<b>, <i>), never user input.
+    if (v !== undefined) el.innerHTML = v;
+  });
+  sel.value = code;
+}
+
+function pick(){
+  const saved = localStorage.getItem("hdpi_lang");
+  if (saved && T[saved]) return saved;
+  for (const l of (navigator.languages || [navigator.language || "en"])) {
+    const base = String(l).toLowerCase().split("-")[0];
+    if (T[base]) return base;
+  }
+  return "en";
+}
+
+sel.addEventListener("change", () => {
+  localStorage.setItem("hdpi_lang", sel.value);
+  apply(sel.value);
+});
+
+apply(pick());
+</script>
 </body>
 </html>
