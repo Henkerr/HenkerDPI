@@ -189,6 +189,10 @@ resolver reachability probe and the decoy-packet checksum fix — were never
 backported to it, so it still carries the intermittent-disconnect bug that those
 releases fixed on Windows. Treat it as source to build on, not as a release.
 
+## Changelog
+
+Version history is in [CHANGELOG.md](CHANGELOG.md); each release also publishes the SHA-256 of its assets.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Bundled third-party components (WinDivert, pydivert, and others) retain their own licenses; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
