@@ -14,6 +14,8 @@
 
 <sub>Windows 10/11 64-bit · installs in one click · updates itself from then on</sub>
 
+<sub>Not a developer? Use the [download page](https://henkerr.github.io/HenkerDPI/) instead — it has install steps in Turkish.</sub>
+
 </div>
 
 A general-purpose DPI (Deep Packet Inspection) bypass tool for **Windows**. Access any blocked website freely without a VPN.
