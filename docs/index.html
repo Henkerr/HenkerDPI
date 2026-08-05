@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HenkerDPI — VPN'siz DPI bypass</title>
+<meta name="description" content="Engellenen sitelere VPN olmadan eriş. Windows için tek tık kurulum, kendi kendini günceller.">
+<meta property="og:title" content="HenkerDPI — VPN'siz DPI bypass">
+<meta property="og:description" content="Engellenen sitelere VPN olmadan eriş. Windows için tek tık kurulum.">
+<meta property="og:image" content="https://raw.githubusercontent.com/Henkerr/HenkerDPI/master/assets/social-preview.png">
+<link rel="icon" href="icon.png">
+<style>
+  :root{
+    --bg:#0a0b0d; --card:#141518; --border:#24262b;
+    --accent:#4d8bff; --accent-dim:#294a99;
+    --fg:#f4f6f9; --fg2:#9499a6; --fg3:#6d7280;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font:16px/1.65 "Segoe UI",system-ui,-apple-system,sans-serif;
+    display:flex; flex-direction:column; align-items:center;
+    min-height:100vh; padding:56px 20px 40px; text-align:center;
+    background-image:radial-gradient(circle at 50% -10%, #1a2949 0%, transparent 55%);
+  }
+  img.logo{width:132px;height:132px;filter:drop-shadow(0 8px 28px rgba(77,139,255,.30))}
+  h1{font-size:44px;margin:20px 0 6px;letter-spacing:-.5px}
+  .tag{color:var(--accent);font-weight:600;font-size:18px;margin:0 0 14px}
+  .lede{color:var(--fg2);max-width:520px;margin:0 auto 34px}
+  .dl{
+    display:inline-block;background:var(--accent);color:#fff;text-decoration:none;
+    font-size:19px;font-weight:700;padding:17px 46px;border-radius:11px;
+    box-shadow:0 8px 26px rgba(77,139,255,.32); transition:transform .12s, background .12s;
+  }
+  .dl:hover{background:#3f7cf0;transform:translateY(-2px)}
+  .meta{color:var(--fg3);font-size:13.5px;margin-top:13px}
+  .steps{
+    background:var(--card);border:1px solid var(--border);border-radius:14px;
+    padding:24px 28px;margin:44px auto 0;max-width:520px;text-align:left;
+  }
+  .steps h2{font-size:15px;margin:0 0 14px;color:var(--fg2);
+            text-transform:uppercase;letter-spacing:.9px;font-weight:600}
+  ol{margin:0;padding-left:20px;color:var(--fg2)}
+  ol li{margin-bottom:9px}
+  ol li:last-child{margin-bottom:0}
+  ol b{color:var(--fg);font-weight:600}
+  .warn{
+    background:#1a1508;border:1px solid #3d3115;border-radius:12px;
+    padding:16px 20px;margin:20px auto 0;max-width:520px;text-align:left;
+    color:#d8c9a4;font-size:14.5px;
+  }
+  .warn b{color:#f0dcae}
+  .alt{margin-top:36px;color:var(--fg3);font-size:14px;max-width:520px}
+  .alt a{color:var(--fg2)}
+  a{color:var(--accent)}
+  footer{margin-top:44px;color:var(--fg3);font-size:13px}
+</style>
+</head>
+<body>
+
+  <img class="logo" src="icon.png" alt="HenkerDPI">
+  <h1>HenkerDPI</h1>
+  <p class="tag">VPN'siz DPI bypass — Windows</p>
+  <p class="lede">
+    Engellenen sitelere VPN kullanmadan eriş. Trafiğin dışarıdaki hiçbir sunucudan
+    geçmez, bu yüzden hız kaybı yok denecek kadar azdır.
+  </p>
+
+  <a class="dl" href="https://github.com/Henkerr/HenkerDPI/releases/latest/download/HenkerDPI_Setup.exe">
+    ⬇ &nbsp;İndir
+  </a>
+  <p class="meta">Windows 10/11 (64-bit) · ~29 MB · tek dosya kurulum</p>
+
+  <div class="steps">
+    <h2>Kurulum</h2>
+    <ol>
+      <li><b>İndir</b>'e bas, dosya inince çift tıkla.</li>
+      <li>Windows yönetici izni sorar → <b>Evet</b>.</li>
+      <li>Kurulum biter, uygulama açılır. Güç düğmesine bas, korumaya başlar.</li>
+    </ol>
+  </div>
+
+  <div class="warn">
+    <b>Windows bir uyarı gösterirse normal.</b> Uygulama dijital olarak imzalanmadığı için
+    ilk çalıştırmada <i>"Windows bilgisayarınızı korudu"</i> ekranı çıkabilir.
+    <b>Ek bilgi → Yine de çalıştır</b> deyip devam et. Bazı antivirüsler de
+    DPI bypass araçlarını yanlışlıkla şüpheli işaretler.
+  </div>
+
+  <p class="alt">
+    Kurulum istemiyorsan
+    <a href="https://github.com/Henkerr/HenkerDPI/releases/latest/download/HenkerDPI.exe">taşınabilir sürümü</a>
+    indirebilirsin (yönetici olarak çalıştırman gerekir).
+    Kurduktan sonra yeni sürümler kendiliğinden gelir, bir daha indirme yapmazsın.
+  </p>
+
+  <footer>
+    Açık kaynak · MIT ·
+    <a href="https://github.com/Henkerr/HenkerDPI">GitHub'da incele</a>
+  </footer>
+
+</body>
+</html>
