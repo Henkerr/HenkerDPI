@@ -10,9 +10,9 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-yellow?logo=python)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-### [⬇ Download HenkerDPI Setup](https://github.com/Henkerr/HenkerDPI/releases/latest/download/HenkerDPI_Setup.exe)
+### [⬇ Download HenkerDPI](https://github.com/Henkerr/HenkerDPI/releases/latest/download/HenkerDPI.exe)
 
-<sub>Windows 10/11 64-bit · installs in one click · updates itself from then on</sub>
+<sub>Windows 10/11 64-bit · run as administrator · updates itself from then on</sub>
 
 <sub>Or use the [download page](https://henkerr.github.io/HenkerDPI/) — one button, with the install steps.</sub>
 
@@ -57,13 +57,18 @@ By default HenkerDPI bypasses **IPv4 traffic only** — the proven, drop-free pa
 
 ## Installation
 
-### Installer (Recommended)
+### Portable (Recommended right now)
 
-Download **`HenkerDPI_Setup.exe`** from [Releases](../../releases) and run it. It installs to Program Files, creates Start-menu and desktop shortcuts, and launches the app — nothing else to configure. Uninstall from *Settings → Apps* like any other program.
+Download **`HenkerDPI.exe`** from [Releases](../../releases) and run it **as Administrator** (right-click → *Run as administrator*). A single file, no installation; the WinDivert driver is bundled inside.
 
-### Portable
+### Installer
 
-Prefer a single file? Download **`HenkerDPI.exe`** from the same release and run it **as Administrator** (right-click → *Run as administrator*). No installation; the WinDivert driver is bundled inside.
+**`HenkerDPI_Setup.exe`** installs to Program Files, creates Start-menu and desktop shortcuts and launches the app, so there is no "run as administrator" step to remember. Uninstall from *Settings → Apps* like any other program.
+
+> **Currently blocked by Windows Defender.** Since 2026-08-05 Defender deletes the installer as
+> `Trojan:Win32/Wacatac` — a machine-learning false positive on the Inno Setup wrapper, reported to
+> Microsoft and awaiting review (submission `0ce2fe53-44eb-4866-a256-e4945d392905`). The application
+> it installs is unaffected and scans clean, so use the portable download until this is resolved.
 
 ### Updates
 
