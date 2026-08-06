@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-yellow?logo=python)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-### [⬇ Download HenkerDPI](https://github.com/Henkerr/HenkerDPI/releases/latest/download/HenkerDPI.exe)
+### [⬇ Download HenkerDPI](https://github.com/Henkerr/HenkerDPI/releases/latest)
 
 <sub>Windows 10/11 64-bit · run as administrator · updates itself from then on</sub>
 
