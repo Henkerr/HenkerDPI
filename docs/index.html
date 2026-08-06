@@ -117,10 +117,12 @@
     <span data-t="warn"></span>
   </section>
 
-  <p class="note">
-    <span data-t="portable1"></span>
-    <a href="https://github.com/Henkerr/HenkerDPI/releases/latest/download/HenkerDPI_Setup.exe" data-t="portablelink"></a><span data-t="portable2"></span>
-  </p>
+  <!-- The installer link is deliberately absent. Defender's ML heuristic flags
+       the Inno Setup build (Wacatac.B!ml, a false positive on an unsigned
+       installer that ships a network driver), and the current release ships the
+       portable exe only, so pointing at latest/download/HenkerDPI_Setup.exe
+       would both 404 and hand people a file their antivirus deletes. Restore it
+       once the submission clears AND an installer is built for the release. -->
 
   <footer>
     <span data-t="license"></span> ·
