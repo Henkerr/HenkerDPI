@@ -14,7 +14,7 @@
 
 <sub>Windows 10/11 64-bit · run as administrator · updates itself from then on</sub>
 
-<sub>Or use the [download page](https://henkerr.github.io/HenkerDPI/) — one button, with the install steps.</sub>
+<sub>Grab `HenkerDPI.exe` from the assets on that page. Every release publishes its SHA-256.</sub>
 
 </div>
 
@@ -106,7 +106,7 @@ python gui.py  # Must run as Administrator
 ```bash
 pip install -r requirements.txt -r requirements-build.txt
 python -m PyInstaller HenkerDPI.spec --clean -y
-# Output: dist/HenkerDPI.exe (FileVersion 2.4.0.0, admin-manifested, WinDivert bundled)
+# Output: dist/HenkerDPI.exe (version from version_info.txt, admin-manifested, WinDivert bundled)
 ```
 
 ### Build Installer (Windows)
