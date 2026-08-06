@@ -71,12 +71,20 @@ Download **`HenkerDPI.exe`** from [Releases](../../releases) and run it **as Adm
 
 ### Installer
 
-**`HenkerDPI_Setup.exe`** installs to Program Files, creates Start-menu and desktop shortcuts and launches the app, so there is no "run as administrator" step to remember. Uninstall from *Settings → Apps* like any other program.
+**Not published for the current release — use the portable download above.**
 
-> **Currently blocked by Windows Defender.** Since 2026-08-05 Defender deletes the installer as
-> `Trojan:Win32/Wacatac` — a machine-learning false positive on the Inno Setup wrapper, reported to
-> Microsoft and awaiting review (submission `0ce2fe53-44eb-4866-a256-e4945d392905`). The application
-> it installs is unaffected and scans clean, so use the portable download until this is resolved.
+An installer (`HenkerDPI_Setup.exe`, built from `setup.iss`) installs to Program Files, creates
+Start-menu and desktop shortcuts and launches the app, so there is no "run as administrator" step
+to remember. Releases up to 2.4.0 shipped one and you can still build it yourself (see *Building
+from source*), but no installer is attached to 2.7.0.
+
+> **Why.** Defender's machine-learning heuristic flagged the 2.4.0 installer as
+> `Trojan:Win32/Wacatac.B!ml` on 2026-08-05 and deleted it on download — a false positive on the
+> unsigned Inno Setup wrapper, not on the application inside, which scanned clean throughout.
+> Microsoft has since cleared it: the same asset now downloads and scans clean. The verdict is
+> per-binary though, so a freshly built installer is a new file that can be flagged again. Until
+> the project is code-signed, releases ship the portable executable only — it has never been
+> flagged.
 
 ### Updates
 
