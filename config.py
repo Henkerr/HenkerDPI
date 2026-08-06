@@ -10,7 +10,7 @@ import sys
 # Single source of truth for the running build's version. Keep in sync with
 # version_info.txt (FileVersion) and setup.iss (AppVersion) when releasing —
 # updater.py compares this against the latest GitHub release tag.
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.7.0"
 
 # Repository the updater queries. Both are validated at download time so a
 # tampered API response cannot point the downloader at an arbitrary host.
@@ -180,12 +180,14 @@ CATEGORIES = {
 }
 
 # === Secure DNS resolvers (GUI labels) ===
-# NOTE: despite the historical "doh"/DOH_ naming kept for settings-file
-# compatibility, this app does NOT speak DNS-over-HTTPS. It repoints the
-# system resolver to one of these public servers over plain UDP/53 to defeat
-# ISP DNS hijacking; the queries themselves are NOT encrypted. The actual
-# resolver addresses (v4 + v6) live in doh.py PROVIDERS — these entries only
-# supply the display name and the IP shown in the UI.
+# The app repoints the system resolver to one of these public servers, and
+# since 2.6.0 also switches on Windows' built-in DNS-over-HTTPS client for it
+# (doh.enable_system_doh) so the queries actually leave the machine encrypted —
+# required against an ISP that intercepts port 53 for every resolver, where
+# changing the address alone does nothing. Set "system_doh_enabled": false to
+# repoint the resolver only, leaving Windows' encrypted-DNS settings untouched.
+# The actual resolver addresses (v4 + v6) live in doh.py PROVIDERS — these
+# entries only supply the display name and the IP shown in the UI.
 DOH_PROVIDERS = {
     "cloudflare": {
         "name": "Cloudflare",
@@ -234,6 +236,25 @@ def _default_settings():
         # proven, drop-free one; enable only if IPv6-reachable sites open
         # inconsistently. Toggle by editing settings.json (no GUI switch).
         "ipv6_bypass_enabled": False,
+        # Desync tuning. Which combination beats a DPI — and which one BREAKS
+        # every HTTPS site because a NAT on the path repairs the decoy — differs
+        # per network, so there is no single correct default to ship. In "auto"
+        # (the default) the app measures its own line on first use of a network,
+        # caches the winner per network and re-checks when the network changes;
+        # the user never picks anything. Set "strategy_mode" to "manual" to force
+        # the decoy_mode/split_mode below instead (support/debug only).
+        "strategy_mode": "auto",
+        # Used when strategy_mode == "manual", and as the fallback if a
+        # measurement cannot run at all. This pair is the longest-standing
+        # confirmed one: right sequence number so a reassembling DPI swallows the
+        # decoy, wrong checksum so the server never does.
+        "decoy_mode": "badsum",
+        "split_mode": "record",
+        # Turn on Windows' built-in DNS-over-HTTPS client for the resolver this
+        # app pins. Required on ISPs that intercept port 53 for every resolver,
+        # where changing the DNS server address alone does nothing. Set False to
+        # leave Windows' encrypted-DNS settings untouched.
+        "system_doh_enabled": True,
         # Ask GitHub once a day whether a newer release exists. Set False to
         # stop the app making any outbound request of its own.
         "update_check_enabled": True,

@@ -11,6 +11,41 @@ from config import MODE_ALL
 
 FAKE_TTL = 6  # Exact V1 value — proven to work
 
+# How far back the decoy's sequence number is moved when the "badseq" defense is
+# active. Far outside any plausible receive window, so a server that does get the
+# decoy discards it as an old duplicate instead of accepting it as the real
+# ClientHello. Unlike a wrong checksum, a wrong seq survives every NAT, tethering
+# driver and TCP normaliser on the path — none of them can "repair" it.
+FAKE_SEQ_BACKOFF = 0x10000
+
+# Ways to make the decoy un-acceptable to the destination while a DPI box still
+# parses its spoofed SNI. These are NOT stacking defences — they trade off:
+#   "badsum" — right seq, wrong checksum. A DPI that reassembles the flow takes
+#              the decoy as the real ClientHello (right seq = right slot in its
+#              buffer) and later sees the true bytes as a retransmission, so the
+#              spoofed hostname is what it judges. The destination drops it on
+#              the checksum. This is the one that beats a reassembling DPI.
+#   "badseq" — wrong seq. Survives a NAT/tethering stack that recomputes (and so
+#              REPAIRS) checksums, which is the only way to stay safe on such a
+#              path. But a reassembling DPI discards the decoy as out-of-window,
+#              i.e. it makes the decoy invisible to the very box it targets.
+#   "both"   — wrong on both counts: NAT-safe, but inherits badseq's blindness.
+#   "off"    — no decoy; the fragmentation alone has to do it.
+# Because the right answer depends on the path, autotune.py measures it per
+# network rather than shipping one default and hoping.
+DECOY_MODES = ("both", "badseq", "badsum", "off")
+
+# Where the ClientHello is cut into TCP segments:
+#   "record"     — cut after byte 1, splitting the TLS record header (default)
+#   "record+sni" — also cut at the middle of the SNI (3 segments)
+#   "sni"        — cut at the middle of the SNI only (the pre-2.5 behaviour)
+#   "none"       — no cut; the decoy alone does the work
+# Which one wins depends on the DPI, so the app measures it per network instead
+# of shipping a guess (see autotune.py). Measured examples: on a fixed line that
+# REASSEMBLES the flow no cut helps on its own — the decoy has to be the thing
+# that poisons it; on a mobile carrier the record-header cut alone gets through.
+SPLIT_MODES = ("record", "record+sni", "sni", "none")
+
 # Local/private IP ranges that should never be bypassed.
 # 169.254/16 is link-local (APIPA); 100.64/10 is carrier-grade NAT, which many
 # mobile ISPs hand out — fragmenting a handshake to a CGNAT-internal host is
@@ -226,13 +261,21 @@ def build_icmpv6_port_unreachable(pkt):
                            interface=pkt.interface, direction=Direction.INBOUND)
 
 
-def tcp_fragment_and_send(w, packet, sni: str, verbose: bool = False) -> bool:
+def tcp_fragment_and_send(w, packet, sni: str, verbose: bool = False,
+                          decoy: str = "both", split: str = "record") -> bool:
     """
-    DPI bypass via SNI-midpoint fragmentation + disorder:
+    DPI bypass via ClientHello fragmentation + disorder:
     1) Fake packet with low TTL + spoofed SNI (confuses DPI state)
-    2) Send fragment 2 first (out-of-order — DPI can't reassemble)
-    3) Send fragment 1 last (contains first half of real SNI)
+    2) Send the fragments last-to-first (out-of-order — DPI can't reassemble)
     Original packet is NOT sent — caller must drop it.
+
+    `decoy` selects how step 1's packet is made unusable by the destination:
+    "both" (wrong checksum + wrong seq), "badseq", "badsum", or "off" to skip the
+    decoy entirely and rely on fragmentation alone. See DECOY_MODES — a decoy the
+    server accepts poisons the handshake transcript and breaks every HTTPS site,
+    so on a path that repairs one defence the others still have to hold.
+
+    `split` selects where the ClientHello is cut. See SPLIT_MODES.
     """
     payload = bytes(packet.payload)
     if len(payload) < 10:
@@ -273,6 +316,23 @@ def tcp_fragment_and_send(w, packet, sni: str, verbose: bool = False) -> bool:
 
     split_pos = max(1, min(split_pos, len(payload) - 1))
 
+    # Cut positions, ascending. Byte 1 splits the TLS record header across two
+    # segments; the SNI-midpoint cut splits the hostname itself. "none" makes no
+    # cut at all — the decoy alone carries the bypass, which is what works on a
+    # DPI that reassembles the flow but takes the first copy of a segment.
+    cuts = set()
+    if split in ("record+sni", "sni"):
+        cuts.add(split_pos)
+    if split in ("record+sni", "record"):
+        cuts.add(1)
+    cuts = sorted(c for c in cuts if 0 < c < len(payload))
+    if not cuts and split != "none":
+        cuts = [split_pos]
+    # Nothing to do: no cut and no decoy would re-send the original unchanged,
+    # so tell the caller to forward it instead of rebuilding it.
+    if not cuts and decoy == "off":
+        return False
+
     # Build fake payload with spoofed SNI
     if sni_pos != -1:
         fake_domain = ("www.w3.org" + "w" * len(sni))[:len(sni)]
@@ -282,7 +342,7 @@ def tcp_fragment_and_send(w, packet, sni: str, verbose: bool = False) -> bool:
     else:
         fake_payload = payload
 
-    # Build all three packets BEFORE sending any. If construction fails
+    # Build every packet BEFORE sending any. If construction fails
     # (malformed packet), return False so the caller forwards the original
     # untouched — never leave a connection with a half-sent burst.
     try:
@@ -295,30 +355,44 @@ def tcp_fragment_and_send(w, packet, sni: str, verbose: bool = False) -> bool:
         #    TLS with the fake SNI -> handshake_failure/RST/hang. That poisoning
         #    is the primary cause of the intermittent connection drops. Low TTL
         #    is kept as a secondary defense.
+        #    A NAT, a USB-tethering driver or a carrier TCP normaliser rewrites
+        #    the source address and recomputes the L4 checksum on the way out,
+        #    which REPAIRS the deliberate corruption — observed live on iPhone
+        #    USB tethering, where every HTTPS site broke because the repaired
+        #    decoy reached the server. A wrong sequence number cannot be
+        #    repaired that way, so it is the default second defence.
+        fake_badsum = decoy in ("both", "badsum")
+        fake_seq = orig_seq
+        if decoy in ("both", "badseq"):
+            fake_seq = (orig_seq - FAKE_SEQ_BACKOFF) & 0xFFFFFFFF
         fake = _build_packet(headers, fake_payload, l4_off,
-                             orig_seq, orig_ack,
+                             fake_seq, orig_ack,
                              iface, direction, ttl=FAKE_TTL, ver=ver)
-        fake = _corrupt_tcp_checksum(fake, l4_off)
-        # 2) FRAGMENT 2 FIRST (disorder — DPI can't reassemble out-of-order)
-        frag2 = _build_packet(headers, payload[split_pos:], l4_off,
-                              orig_seq + split_pos, orig_ack,
-                              iface, direction, ver=ver)
-        # 3) FRAGMENT 1 (contains first half of real SNI)
-        frag1 = _build_packet(headers, payload[:split_pos], l4_off,
-                              orig_seq, orig_ack,
-                              iface, direction, ver=ver)
+        if fake_badsum:
+            fake = _corrupt_tcp_checksum(fake, l4_off)
+        # 2) The real ClientHello, cut into segments and sent LAST-TO-FIRST so a
+        #    DPI that does not buffer out-of-order data never sees the hostname
+        #    in one piece.
+        bounds = [0] + cuts + [len(payload)]
+        frags = [
+            _build_packet(headers, payload[a:b], l4_off,
+                          orig_seq + a, orig_ack, iface, direction, ver=ver)
+            for a, b in zip(bounds, bounds[1:])
+        ]
     except (IndexError, struct.error):
         return False
 
     # Send phase: original was already dropped by the caller, so a transient
     # send error here can't be recovered by re-sending the original (would
     # duplicate seq). Swallow it — TCP will retransmit the real ClientHello.
-    # The fake keeps its deliberately-wrong TCP checksum (recalculate_checksum
-    # =False); the real fragments get correct checksums recomputed by WinDivert.
+    # A badsum fake keeps its deliberately-wrong TCP checksum
+    # (recalculate_checksum=False); every other packet gets correct checksums
+    # recomputed by WinDivert — _build_packet leaves them zeroed.
     try:
-        w.send(fake, recalculate_checksum=False)
-        w.send(frag2)
-        w.send(frag1)
+        if decoy != "off":
+            w.send(fake, recalculate_checksum=not fake_badsum)
+        for frag in reversed(frags):
+            w.send(frag)
     except Exception:
         if verbose:
             print("[!] fragment send failed")

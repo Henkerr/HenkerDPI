@@ -38,15 +38,23 @@ HenkerDPI works at the packet level — it manipulates TLS handshake packets to 
 
 HenkerDPI uses a layered bypass strategy:
 
-1. **Fake ClientHello Decoy** — Sends a decoy packet carrying a spoofed SNI, a deliberately invalid TCP checksum, and a low TTL. The DPI records the fake domain, but the real server drops the decoy (bad checksum / expired TTL) so it never poisons your actual handshake.
+0. **It measures your line and configures itself.** There is no single desync that beats every ISP — the combination that gets Discord through one Turkish fixed line is the one that breaks *every* HTTPS site on an iPhone USB hotspot, because the hotspot's NAT repairs the decoy the fixed line needs to be broken. So on the first run on a given network HenkerDPI finds a site your line actually blocks, tries its strategies against it through the same code path it uses in production, and keeps the first one that both defeats the block **and** leaves normal sites working. The result is cached per network (interface + gateway + gateway MAC), so later starts are instant, and it re-measures on its own when you move to a different network. **There is nothing to configure.**
 
-2. **TCP Fragmentation + Disorder** — Splits the real TLS ClientHello at the midpoint of the SNI hostname and sends the fragments out of order. DPI systems can't reassemble out-of-order packets.
+1. **Fake ClientHello Decoy** — Sends a decoy packet carrying a spoofed SNI and a low TTL, made unusable by the destination either through a deliberately invalid TCP checksum or an out-of-window sequence number. The DPI records the fake domain; the real server drops the decoy so it never poisons your actual handshake. Which of the two defences applies is part of what step 0 measures — a wrong checksum is what fools a DPI that reassembles the flow, while a wrong sequence number is what survives a NAT that would otherwise repair the decoy.
+
+2. **TCP Fragmentation + Disorder** — Splits the real TLS ClientHello and sends the fragments out of order, so a DPI that does not buffer out-of-order data never sees the hostname in one piece. Where the cut falls (at the TLS record header, in the middle of the SNI, both, or not at all) is also measured per network.
 
 3. **RST Injection Protection** *(optional, off by default)* — A toggle that drops inbound RST packets on 443/80 at the kernel level using WinDivert. Left off by default so legitimate connection resets are never swallowed; enable it only if your ISP injects RSTs.
 
 Additionally:
 - **QUIC Fast-Fallback** — Instead of silently black-holing UDP/QUIC, HenkerDPI answers each QUIC attempt with a locally injected ICMP *port-unreachable*, so the browser falls back to TCP instantly (no timeout wait) without leaking the SNI over UDP.
 - **Secure DNS (crash-safe)** — Redirects DNS to secure resolvers (Cloudflare 1.1.1.1 / Google 8.8.8.8 / Quad9 9.9.9.9). This switches your *resolver* to bypass ISP DNS hijacking — it is not DNS-over-HTTPS encryption. Your original DNS is journaled to disk before any change and restored on the next launch even after a force-kill or crash. The chosen resolver is probed first: if it is unreachable, HenkerDPI falls back to another provider instead of pinning DNS to a dead server. IPv6 DNS is only pinned on adapters that actually have IPv6 connectivity.
+
+## If a site still will not open
+
+The bypass configures itself, so the first thing to try is forcing a fresh measurement: close HenkerDPI, delete `%LOCALAPPDATA%\HenkerDPI\autotune.json`, and start it again. The app re-measures your line from scratch and logs which strategy it picked.
+
+The measurement is cached per network, and it re-runs by itself when you connect to a different one. If you want to pin a strategy by hand (support and debugging only), set `"strategy_mode": "manual"` in `%LOCALAPPDATA%\HenkerDPI\settings.json` and the `decoy_mode` / `split_mode` values there are used instead.
 
 ## IPv6 Bypass (experimental, opt-in)
 

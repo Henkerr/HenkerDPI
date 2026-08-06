@@ -16,8 +16,12 @@ import sys
 import json
 import atexit
 import socket
+import struct
 import subprocess
+import threading
 import ctypes
+import winreg
+import urllib.request
 
 from config import STATE_DIR
 
@@ -30,16 +34,23 @@ PROVIDERS = {
     "cloudflare": {
         "v4": ("1.1.1.1", "1.0.0.1"),
         "v6": ("2606:4700:4700::1111", "2606:4700:4700::1001"),
+        "doh": "https://cloudflare-dns.com/dns-query",
     },
     "google": {
         "v4": ("8.8.8.8", "8.8.4.4"),
         "v6": ("2001:4860:4860::8888", "2001:4860:4860::8844"),
+        "doh": "https://dns.google/dns-query",
     },
     "quad9": {
         "v4": ("9.9.9.9", "149.112.112.112"),
         "v6": ("2620:fe::fe", "2620:fe::9"),
+        "doh": "https://dns.quad9.net/dns-query",
     },
 }
+
+# Domains used to check whether plain DNS is being tampered with. They are
+# resolved two ways and compared; see detect_dns_interception().
+_PROBE_DOMAINS = ("discord.com", "www.wikipedia.org")
 
 def _pid_alive(pid) -> bool:
     """True if a process with this PID is currently running (Windows)."""
@@ -179,7 +190,7 @@ Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
       $guid = $ad.InterfaceGuid
       $v4 = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$guid" -Name NameServer -ErrorAction SilentlyContinue).NameServer
       $v6 = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters\Interfaces\$guid" -Name NameServer -ErrorAction SilentlyContinue).NameServer
-      $out += [PSCustomObject]@{ name = $ad.Name; v4 = "$v4"; v6 = "$v6"; has6 = [bool]$gw6 }
+      $out += [PSCustomObject]@{ name = $ad.Name; guid = "$guid"; v4 = "$v4"; v6 = "$v6"; has6 = [bool]$gw6 }
     }
   }
 ConvertTo-Json @($out) -Compress
@@ -198,6 +209,7 @@ ConvertTo-Json @($out) -Compress
         name = item.get("name")
         if name:
             result.append({"name": name,
+                           "guid": (item.get("guid") or "").strip(),
                            "v4": _split_servers(item.get("v4")),
                            "v6": _split_servers(item.get("v6")),
                            "has_v6": bool(item.get("has6"))})
@@ -236,6 +248,164 @@ def _flush_dns() -> None:
         _run(["ipconfig", "/flushdns"], timeout=5)
     except Exception:
         pass
+
+
+# === Encrypted DNS (Windows DoH client) ===
+#
+# Pinning the system resolver to a public IP only defeats an ISP that answers
+# for its OWN resolver. An ISP that transparently intercepts port 53 answers for
+# EVERY resolver — measured live on a Turkish fixed line, where 1.1.1.1, 8.8.8.8
+# and 208.67.222.222 all returned the block-page address. Against that, plain DNS
+# cannot be fixed by choosing a different server: the query has to leave the
+# machine encrypted. Windows 10 21H2+/11 has a DoH client built in, but nothing
+# on the command line turns it on — the per-interface switch is a registry value.
+
+_DOH_ROOT = (r"SYSTEM\CurrentControlSet\Services\Dnscache"
+             r"\InterfaceSpecificParameters\{guid}\DohInterfaceSettings\{family}")
+# DohFlags=1 enables DoH for this (interface, server) pair with fallback to
+# unencrypted DNS disabled — fallback would land straight back on the
+# intercepted port 53, so it must stay off.
+_DOH_FLAG_ENABLED = 1
+
+
+def _doh_key(guid: str, family: str, ip: str) -> str:
+    return _DOH_ROOT.format(guid=guid, family=family) + "\\" + ip
+
+
+def _register_doh_template(ip: str, template: str) -> None:
+    """Teach Windows the DoH URL for a resolver IP.
+
+    The three built-in providers are already in Windows' known-server list, but
+    registering is idempotent and covers older builds whose list is shorter.
+    """
+    try:
+        _run(["netsh", "dns", "add", "encryption", f"server={ip}",
+              f"dohtemplate={template}", "autoupgrade=yes", "udpfallback=no"],
+             timeout=8)
+    except Exception:
+        pass
+
+
+def enable_system_doh(guid: str, v4, v6, template: str) -> bool:
+    """Turn on Windows' DoH client for one interface. True if anything was set."""
+    if not guid:
+        return False
+    done = False
+    for family, ips in (("Doh", v4 or ()), ("Doh6", v6 or ())):
+        for ip in ips:
+            _register_doh_template(ip, template)
+            try:
+                key = winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE,
+                                         _doh_key(guid, family, ip), 0,
+                                         winreg.KEY_SET_VALUE)
+                try:
+                    winreg.SetValueEx(key, "DohFlags", 0, winreg.REG_QWORD,
+                                      _DOH_FLAG_ENABLED)
+                    done = True
+                finally:
+                    winreg.CloseKey(key)
+            except OSError:
+                pass
+    return done
+
+
+def disable_system_doh(guid: str, v4, v6) -> None:
+    """Remove the DoH switches we set, so the interface goes back as it was."""
+    if not guid:
+        return
+    for family, ips in (("Doh", v4 or ()), ("Doh6", v6 or ())):
+        for ip in ips:
+            try:
+                winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE,
+                                 _doh_key(guid, family, ip))
+            except OSError:
+                pass
+
+
+def _dns_query_udp(name: str, server: str, timeout: float = 3.0):
+    """Plain DNS/UDP A lookup straight at one server. Returns a set of IPs."""
+    q = struct.pack("!HHHHHH", 0x4832, 0x0100, 1, 0, 0, 0)
+    for label in name.split("."):
+        q += bytes([len(label)]) + label.encode()
+    q += b"\x00" + struct.pack("!HH", 1, 1)
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(timeout)
+    try:
+        s.sendto(q, (server, 53))
+        data, _ = s.recvfrom(2048)
+    except Exception:
+        return set()
+    finally:
+        s.close()
+    return _parse_a_records(data)
+
+
+def _dns_query_doh(name: str, server_ip: str, timeout: float = 6.0):
+    """A lookup over HTTPS, addressed by IP so it needs no DNS to bootstrap.
+
+    Cloudflare/Google/Quad9 all present certificates covering their resolver IPs,
+    so the URL can be https://<ip>/dns-query with verification left on.
+    """
+    q = struct.pack("!HHHHHH", 0, 0x0100, 1, 0, 0, 0)
+    for label in name.split("."):
+        q += bytes([len(label)]) + label.encode()
+    q += b"\x00" + struct.pack("!HH", 1, 1)
+    req = urllib.request.Request(
+        f"https://{server_ip}/dns-query", data=q,
+        headers={"Content-Type": "application/dns-message",
+                 "Accept": "application/dns-message"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return _parse_a_records(r.read())
+    except Exception:
+        return set()
+
+
+def _parse_a_records(data: bytes):
+    """Pull the A records out of a DNS response. Returns a set of IP strings."""
+    out = set()
+    try:
+        ancount = struct.unpack_from("!H", data, 6)[0]
+        off = 12
+        while data[off]:
+            off += data[off] + 1
+        off += 5
+        for _ in range(ancount):
+            if data[off] & 0xC0 == 0xC0:
+                off += 2
+            else:
+                while data[off]:
+                    off += data[off] + 1
+                off += 1
+            rtype, _cls, _ttl, rdlen = struct.unpack_from("!HHIH", data, off)
+            off += 10
+            if rtype == 1 and rdlen == 4:
+                out.add(".".join(str(b) for b in data[off:off + 4]))
+            off += rdlen
+    except (IndexError, struct.error):
+        pass
+    return out
+
+
+def detect_dns_interception(server_ip: str):
+    """Is plain DNS to `server_ip` being answered by someone else?
+
+    Asks the same question twice — once over plain UDP/53, once over HTTPS to
+    the same resolver — and compares. Encrypted answers cannot be forged by a
+    middlebox, so two disjoint answer sets mean port 53 is intercepted.
+
+    Returns True (intercepted), False (clean), or None (couldn't tell).
+    """
+    verdict = None
+    for domain in _PROBE_DOMAINS:
+        plain = _dns_query_udp(domain, server_ip)
+        encrypted = _dns_query_doh(domain, server_ip)
+        if not plain or not encrypted:
+            continue
+        if plain.isdisjoint(encrypted):
+            return True
+        verdict = False
+    return verdict
 
 
 # === Crash-safe journal ===
@@ -329,12 +499,15 @@ def restore_dns_from_journal(log=print) -> bool:
 class DohManager:
     """Redirects system DNS to a secure resolver, crash-safely."""
 
-    def __init__(self, provider: str = "cloudflare", log_callback=None):
+    def __init__(self, provider: str = "cloudflare", log_callback=None,
+                 system_doh: bool = True):
         self._provider = (provider or "cloudflare").strip().lower()
         self._log = log_callback or print
         self._original = {}       # {iface: {"v4": [...], "v6": [...]}}
         self._active = False
         self._atexit_registered = False
+        self._system_doh = system_doh
+        self._doh_enabled_on = []  # [(guid, [v4...], [v6...])] to undo on stop
 
     @property
     def active(self) -> bool:
@@ -409,9 +582,53 @@ class DohManager:
 
         if success:
             self._active = True
+            # Turn on Windows' own DoH client for the resolvers we just pinned.
+            # Without this the queries still leave on port 53, where an ISP that
+            # intercepts every resolver answers them itself and the pin achieves
+            # nothing at all.
+            if self._system_doh:
+                for t in targets:
+                    v6 = list(prov["v6"]) if t.get("has_v6") else []
+                    if enable_system_doh(t.get("guid"), list(prov["v4"]), v6,
+                                         prov["doh"]):
+                        self._doh_enabled_on.append((t["guid"], list(prov["v4"]), v6))
+                if self._doh_enabled_on:
+                    self._log("[DNS] Encrypted DNS (DoH) enabled")
             _flush_dns()
             self._log(f"[DNS] {self._provider.title()} secure DNS active")
+            # Verifying costs a few seconds of network round-trips, so it runs
+            # off the startup path. Silence here used to be the worst outcome:
+            # on an intercepting ISP the app reported success while resolving
+            # nothing correctly.
+            threading.Thread(target=self._verify_dns, args=(prov,),
+                             daemon=True).start()
         return success
+
+    def _verify_dns(self, prov):
+        """Report whether DNS answers are actually reaching us untampered."""
+        try:
+            server = prov["v4"][0]
+            if detect_dns_interception(server) is not True:
+                return
+            if not self._doh_enabled_on:
+                self._log("[!] Your ISP intercepts plain DNS — blocked sites may "
+                          "stay blocked. Enable encrypted DNS.")
+                return
+            probe = _PROBE_DOMAINS[0]
+            try:
+                system = {a[4][0] for a in socket.getaddrinfo(probe, 443,
+                                                              socket.AF_INET)}
+            except Exception:
+                return
+            encrypted = _dns_query_doh(probe, server)
+            if encrypted and system.isdisjoint(encrypted):
+                self._log("[!] Your ISP intercepts plain DNS and encrypted DNS is "
+                          "not in effect yet — restart the computer.")
+            else:
+                self._log("[DNS] ISP intercepts plain DNS; encrypted DNS is "
+                          "bypassing it")
+        except Exception:
+            pass
 
     def stop(self):
         """Restore original DNS. Idempotent — safe to call twice (stop + atexit).
@@ -423,6 +640,12 @@ class DohManager:
         retry — deleting the only recovery record here is what could otherwise
         leave DNS pinned to the public resolver with no way back.
         """
+        # Undo the DoH switches first: they name specific resolver IPs, and those
+        # IPs are about to stop being this interface's DNS servers.
+        for guid, v4, v6 in self._doh_enabled_on:
+            disable_system_doh(guid, v4, v6)
+        self._doh_enabled_on = []
+
         if not self._original:
             self._active = False
             return

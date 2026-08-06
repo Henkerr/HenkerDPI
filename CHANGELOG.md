@@ -7,6 +7,116 @@ each one publishes the SHA-256 of its assets.
 
 ---
 
+## 2.7.0 — 2026-08-06
+
+The app no longer ships a guess about which desync beats your ISP. It measures your line and
+picks for you.
+
+### Fixed
+- **The default decoy was invisible to exactly the kind of DPI it exists to fool.** Since 2.5.0
+  the decoy carried both a wrong checksum *and* a wrong sequence number. The wrong sequence
+  number was added so that a NAT (iPhone USB tethering) recomputing checksums could not repair
+  the decoy into a valid ClientHello. But a DPI that reassembles a TCP flow discards an
+  out-of-window segment outright — so the spoofed hostname never entered its buffer and the
+  decoy did nothing at all. On the fixed line measured today that left Discord unreachable under
+  every split variant; switching the decoy back to a correct sequence number with a wrong
+  checksum opened it on the first try. Both behaviours are still available — which one is right
+  is now measured per network instead of hard-coded.
+- **Correction to the 2.6.0 note below:** its claim that `record` "worked on both" networks was
+  based on a diagnostic that resolved its targets over plain DNS on a line where plain DNS is
+  intercepted, so the "discord" column was measuring the ISP's block-page server, not Discord.
+  The diagnostic now resolves over HTTPS. Re-measured, no split setting works on that line
+  without a correct-sequence decoy.
+
+### Added
+- **Automatic strategy selection (`autotune.py`) — no settings to edit, ever.** On the first run
+  on a given network the engine finds a target the line actually blocks, tries the known
+  strategies against it using the very same code path the engine uses in production, and keeps
+  the first one that both defeats the block *and* leaves normal sites working. The winner is
+  cached per network — fingerprinted by interface, gateway and gateway MAC — so later starts are
+  instant.
+- **Re-measures when the network changes.** Moving between a home line and a phone hotspot
+  switches strategy on its own, which matters because the pair that is correct on one can break
+  every HTTPS site on the other. Returning to a known network restores its cached pair with no
+  probing.
+- **A control check that can veto a strategy.** A candidate that opens the blocked site but
+  breaks `google.com`/`cloudflare.com` is rejected. That is precisely the failure that broke every
+  HTTPS site on tethering in 2.5.0, and it can no longer be selected.
+- `split_mode: "none"` — no cut at all, decoy only. Measured to work where cutting does not.
+
+### Changed
+- `strategy_mode` in `settings.json` (default `"auto"`). Set it to `"manual"` to force the
+  `decoy_mode`/`split_mode` values instead; for support and debugging only.
+- The fallback pair, used only when a measurement cannot run at all, is now `badsum`/`record`.
+- Deleting `%LOCALAPPDATA%\HenkerDPI\autotune.json` forces a fresh measurement.
+
+---
+
+## 2.6.0 — 2026-08-06
+
+Measured on a second Turkish network, a fixed line where the app had never worked at all.
+
+### Fixed
+- **On an ISP that intercepts port 53, the DNS feature did nothing — silently.** Pointing the
+  system resolver at Cloudflare only helps against an ISP that answers for its *own* resolver.
+  This one answers for every resolver: `1.1.1.1`, `8.8.8.8` and `208.67.222.222` all returned the
+  block-page address for `discord.com`. The app reported "secure DNS active" while resolving
+  nothing correctly, so blocked sites stayed blocked no matter how well the DPI bypass worked.
+  The app now switches on Windows' built-in DNS-over-HTTPS client for the resolver it pins, so
+  queries leave the machine encrypted and cannot be answered by anyone else. Undone on stop.
+- **The app never checked that the resolver it pinned was telling the truth.** The existing probe
+  only asked "is it reachable" — an intercepted resolver is perfectly reachable, it just lies.
+  Startup now resolves a probe domain twice, once over plain DNS and once over HTTPS to the same
+  resolver, and compares. Interception is reported in the log instead of passing as success.
+
+### Changed
+- **Default `split_mode` is now `record`** (cut once, at the TLS record header). Two independent
+  networks were measured: `sni` failed on both, `record` worked on both, `record+sni` worked only
+  on the mobile one. More cuts turned out to be worse, not safer — on the fixed line every
+  variant producing three or more segments was blocked and every two-segment variant got through.
+
+### Added
+- `system_doh_enabled` in `settings.json` (default `true`) to leave Windows' encrypted-DNS
+  settings alone.
+- `tools/teshis.py` + `teshis.spec` build a standalone diagnostic that measures which strategy
+  beats the user's ISP and writes a report to their Desktop. It resolves targets over HTTPS and
+  connects by IP, so its results measure the DPI block alone and are not confounded by DNS
+  interception. It refuses to run while HenkerDPI is open, which would invalidate every reading.
+
+---
+
+## 2.5.0 — 2026-08-05
+
+Both changes come from one live session on a Turkish mobile carrier (iPhone USB tethering), where
+the app broke every HTTPS site while failing to bypass anything.
+
+### Fixed
+- **The decoy packet could take down every HTTPS site on a mobile connection.** The spoofed-SNI
+  decoy is meant to be unusable by the server, and since 2.2.0 that was guaranteed by giving it a
+  deliberately wrong TCP checksum. A NAT — a phone's tethering stack, a carrier's CGNAT — rewrites
+  the source address on the way out and recomputes that checksum, which *repairs* the decoy. The
+  server then accepts the fake ClientHello, discards the real fragments as duplicates, and the
+  handshake transcript no longer matches: every site fails with "the message received was
+  unexpected or badly formatted", including sites that were never blocked. Measured directly —
+  Discord answered the repaired decoy with a TLS `handshake_failure` for the spoofed hostname.
+  The decoy now also carries a sequence number far outside the receive window, which no NAT can
+  repair, so all three defences (wrong seq, wrong checksum, low TTL) have to fail before a decoy
+  can poison a handshake.
+
+### Changed
+- **The ClientHello is now cut at the TLS record header as well as inside the SNI.** A DPI that
+  reassembles the flow still sees the whole hostname after an SNI-midpoint cut. On the mobile
+  carrier tested, splitting mid-SNI was blocked on every attempt while splitting after the first
+  byte got through on every attempt; cutting at both positions covers reassembling and
+  non-reassembling DPI with a single strategy.
+
+### Added
+- `decoy_mode` and `split_mode` in `settings.json` for networks the defaults do not beat.
+  `decoy_mode` is `both` (default), `badseq`, `badsum` or `off`; `split_mode` is `record+sni`
+  (default), `record` or `sni` — `sni` restores the pre-2.5 cut.
+
+---
+
 ## 2.4.0 — 2026-08-04
 
 ### Added

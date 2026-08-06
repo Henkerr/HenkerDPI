@@ -11,10 +11,19 @@ import pydivert
 from pydivert.consts import Flag, Param
 from strategies import (extract_sni, should_bypass_fast, tcp_fragment_and_send,
                         build_icmp_port_unreachable,
-                        build_icmpv6_port_unreachable)
+                        build_icmpv6_port_unreachable,
+                        DECOY_MODES, SPLIT_MODES)
 from doh import DohManager, restore_dns_from_journal
 from config import load_settings, get_all_domains, MODE_ALL
 from lang import t
+import autotune
+
+# How often the engine checks whether it is still on the same network. A laptop
+# moving from home Ethernet to a phone hotspot lands on a path whose DPI — and
+# whose NAT checksum behaviour — is different, and a strategy that is right on
+# one can break every HTTPS site on the other. Re-measuring on that change is
+# what makes "install it and forget it" hold.
+NET_WATCH_INTERVAL = 15.0
 
 
 def is_admin() -> bool:
@@ -39,6 +48,13 @@ class BypassEngine:
         self._settings = load_settings()
         self._mode = MODE_ALL
         self._domain_set = set()
+        # Strategy measured for the current network by autotune, or None until
+        # it has run. Kept separate from the settings values so a GUI mode
+        # change (which reloads settings) cannot silently undo the measurement.
+        self._tuned = None
+        self._retune = threading.Event()
+        self._net_sig = None
+        self._pending_measure = False
         self._refresh_match_cache()
         self.stats = {"bypassed": 0, "passed": 0}
         self.running = False
@@ -54,6 +70,18 @@ class BypassEngine:
             self._domain_set = set()
         else:
             self._domain_set = set(get_all_domains(self._settings))
+        # Desync knobs are read here too, so the packet loop never touches disk.
+        # In the default "auto" mode the measured pair wins over whatever is in
+        # settings.json; the manual values are only for a support/debug session.
+        # An unknown value falls back to the default instead of silently
+        # disabling the bypass.
+        if self._settings.get("strategy_mode", "auto") == "auto" and self._tuned:
+            decoy, split = self._tuned
+        else:
+            decoy = self._settings.get("decoy_mode", "badsum")
+            split = self._settings.get("split_mode", "record")
+        self._decoy_mode = decoy if decoy in DECOY_MODES else "badsum"
+        self._split_mode = split if split in SPLIT_MODES else "record"
 
     def reload_settings(self):
         """Reload settings (called when mode changes from GUI)."""
@@ -175,7 +203,9 @@ class BypassEngine:
             # Secure DNS (crash-safe; restored by _cleanup on ANY exit).
             if self._settings.get("doh_enabled", True):
                 provider = self._settings.get("doh_provider", "cloudflare")
-                self._doh = DohManager(provider=provider, log_callback=self._log)
+                self._doh = DohManager(
+                    provider=provider, log_callback=self._log,
+                    system_doh=self._settings.get("system_doh_enabled", True))
                 self._doh.start()
 
             # Kernel DROP: DPI-injected RST packets. OFF by default — blanket
@@ -221,6 +251,100 @@ class BypassEngine:
                 "tcp.Payload[0] == 0x16 and tcp.Payload[5] == 0x01 and "
                 + loc
             )
+            # Measure the line before touching traffic, then keep watching for a
+            # network change. The measurement is cached per network, so this is
+            # a one-off cost the first time a given network is seen.
+            self._net_sig = autotune.network_signature()
+            self._retune.clear()
+            threading.Thread(target=self._net_watch, daemon=True).start()
+
+            restarts = 0
+            while not self._stop_event.is_set():
+                self._apply_strategy()
+                self._divert_loop(main_filter)
+                if self._stop_event.is_set():
+                    break
+                if self._retune.is_set():
+                    restarts = 0        # deliberate re-open, not a failure
+                    continue
+                # The loop returned without being asked to, i.e. the handle died
+                # under us. Re-open a few times — then stop, rather than spin.
+                restarts += 1
+                if restarts > 3:
+                    self._log("[!] Divert handle kapandi — motor duruyor")
+                    break
+                self._stop_event.wait(1.0)
+
+        except Exception as e:
+            if not self._stop_event.is_set():
+                self._log(f"[!] {e}")
+        finally:
+            self._cleanup()
+            self.running = False
+            self._log(f"{t('engine_stopped')} | Bypass: {self.stats['bypassed']}")
+
+    def _apply_strategy(self, force: bool = False):
+        """Pick the desync pair for the network we are on (measuring if needed).
+
+        A network change does NOT force a re-measure: the cache is keyed by
+        network, so moving between two known networks (home line <-> phone
+        hotspot) switches back instantly with no probing at all.
+        """
+        try:
+            decoy, split, source = autotune.resolve_strategy(
+                self._settings, self._log, force=force)
+            self._tuned = (decoy, split)
+            self._refresh_match_cache()
+            # Booting before the link is up is normal for the autostart task:
+            # remember that this network was never actually measured, so the
+            # watcher can measure it as soon as there is a way out.
+            self._pending_measure = (source == "offline")
+            if source != "onbellek":
+                self._log(f"[*] Strateji: {self._decoy_mode}/{self._split_mode}")
+        except Exception as e:
+            # A failed measurement must never stop the engine — fall back to the
+            # pair that has the widest confirmed track record.
+            self._tuned = ("badsum", "record")
+            self._refresh_match_cache()
+            self._log(f"[!] Otomatik strateji secimi basarisiz ({e}) — varsayilan")
+        self._retune.clear()
+
+    def _net_watch(self):
+        """Notice a network change and force a re-measure.
+
+        Closing the main handle is what unblocks the recv() in the packet loop;
+        the loop then falls back to the outer while, re-measures and reopens.
+        """
+        while not self._stop_event.wait(NET_WATCH_INTERVAL):
+            try:
+                sig = autotune.network_signature()
+            except Exception:
+                continue
+            changed = sig != "unknown" and sig != self._net_sig
+            # The network can come back without its fingerprint changing (link
+            # was up, the line was not). Measure as soon as there is a way out.
+            recovered = (not changed and self._pending_measure
+                         and sig != "unknown" and autotune.online())
+            if not changed and not recovered:
+                continue
+            if changed:
+                self._net_sig = sig
+                self._log("[*] Ag degisti — strateji yeniden olculuyor")
+            else:
+                self._pending_measure = False
+                self._log("[*] Baglanti geldi — strateji olculuyor")
+            self._retune.set()
+            handle = self._main_handle
+            if handle is not None:
+                try:
+                    if handle.is_open:
+                        handle.close()
+                except Exception:
+                    pass
+
+    def _divert_loop(self, main_filter: str):
+        """Open the main handle and process ClientHellos until stop or re-tune."""
+        try:
             self._main_handle = pydivert.WinDivert(main_filter)
             self._main_handle.open()
             # Safety-net queue sizing for ClientHello bursts (a page opening
@@ -234,7 +358,7 @@ class BypassEngine:
                 except Exception:
                     pass
 
-            while not self._stop_event.is_set():
+            while not self._stop_event.is_set() and not self._retune.is_set():
                 try:
                     packet = self._main_handle.recv()
                 except Exception:
@@ -258,7 +382,10 @@ class BypassEngine:
                     if len(payload) > 5 and payload[0] == 0x16:
                         sni = extract_sni(payload)
                         if sni and should_bypass_fast(sni, self._mode, self._domain_set):
-                            if tcp_fragment_and_send(self._main_handle, packet, sni, self._verbose):
+                            if tcp_fragment_and_send(self._main_handle, packet, sni,
+                                                     self._verbose,
+                                                     self._decoy_mode,
+                                                     self._split_mode):
                                 self.stats["bypassed"] += 1
                                 # In ALL mode, log every 50th bypass to reduce noise
                                 if self._mode == MODE_ALL:
@@ -282,12 +409,19 @@ class BypassEngine:
                         pass
 
         except Exception as e:
-            if not self._stop_event.is_set():
+            # A re-tune closes the handle under us on purpose; that is not an
+            # error worth showing, and it must not stop the engine.
+            if not self._stop_event.is_set() and not self._retune.is_set():
                 self._log(f"[!] {e}")
+                raise
         finally:
-            self._cleanup()
-            self.running = False
-            self._log(f"{t('engine_stopped')} | Bypass: {self.stats['bypassed']}")
+            handle, self._main_handle = self._main_handle, None
+            if handle is not None:
+                try:
+                    if handle.is_open:
+                        handle.close()
+                except Exception:
+                    pass
 
     def stop(self):
         """Stop bypass (thread-safe)."""
