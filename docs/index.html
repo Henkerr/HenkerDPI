@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HenkerDPI — DPI bypass for Windows</title>
-<meta name="description" content="Open blocked websites without a VPN. HenkerDPI reshapes the TLS handshake your ISP inspects, locally on your own machine. One-click install for Windows 10/11.">
-<meta property="og:title" content="HenkerDPI — DPI bypass for Windows">
+<title>HenkerDPI — DPI bypass for Windows and macOS</title>
+<meta name="description" content="Open blocked websites without a VPN. HenkerDPI reshapes the TLS handshake your ISP inspects, locally on your own machine. Runs on Windows 10/11 and macOS 11+.">
+<meta property="og:title" content="HenkerDPI — DPI bypass for Windows and macOS">
 <meta property="og:description" content="Open blocked websites without a VPN. Nothing is routed through a remote server.">
 <meta property="og:image" content="https://raw.githubusercontent.com/Henkerr/HenkerDPI/master/assets/social-preview.png">
 <link rel="icon" href="icon.png">
@@ -45,6 +45,15 @@
     box-shadow:0 8px 26px rgba(77,139,255,.32);transition:transform .12s,background .12s;
   }
   .dl:hover{background:#3f7cf0;transform:translateY(-2px)}
+  .dlrow{display:flex;gap:13px;justify-content:center;flex-wrap:wrap}
+  .dl .os{font-size:17px;opacity:.9}
+  /* The platform you are not on stays available but stops competing for the
+     click -- the visitor should not have to read two buttons to find theirs. */
+  .dl.secondary{
+    background:transparent;color:var(--fg2);
+    border:1px solid var(--border);box-shadow:none;font-weight:600;
+  }
+  .dl.secondary:hover{background:#191b1f;color:var(--fg);border-color:#333640}
   .meta{color:var(--fg3);font-size:13.5px;margin-top:13px}
 
   .points{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:46px}
@@ -91,9 +100,19 @@
     <p class="tag" data-t="tagline"></p>
     <p class="lede" data-t="lede"></p>
 
-    <a class="dl" href="https://github.com/Henkerr/HenkerDPI/releases/latest">
-      ⬇ &nbsp;<span data-t="download"></span>
-    </a>
+    <!-- Both buttons point at the RELEASE PAGE, never straight at an asset.
+         GitHub Support already asked for a direct executable download link to
+         be taken off this account once; a link that fetches the binary itself
+         is that same pattern, so it must not come back. Visitors pick their
+         file from the assets list on the release page. -->
+    <div class="dlrow">
+      <a class="dl" id="dl-win" href="https://github.com/Henkerr/HenkerDPI/releases/latest">
+        <span class="os">⊞</span>&nbsp;<span data-t="dl_win"></span>
+      </a>
+      <a class="dl" id="dl-mac" href="https://github.com/Henkerr/HenkerDPI/releases/latest">
+        <span class="os"></span>&nbsp;<span data-t="dl_mac"></span>
+      </a>
+    </div>
     <p class="meta" data-t="meta"></p>
   </div>
 
@@ -117,6 +136,17 @@
     <span data-t="warn"></span>
   </section>
 
+  <section>
+    <h2 data-t="mach"></h2>
+    <p data-t="macb"></p>
+    <ol>
+      <li data-t="m1"></li>
+      <li data-t="m2"></li>
+      <li data-t="m3"></li>
+    </ol>
+    <p class="meta" data-t="maccover"></p>
+  </section>
+
   <!-- The installer link is deliberately absent. Defender's ML heuristic flags
        the Inno Setup build (Wacatac.B!ml, a false positive on an unsigned
        installer that ships a network driver), and the current release ships the
@@ -138,15 +168,15 @@ const NAMES = {en:"English", tr:"Türkçe", de:"Deutsch", ru:"Русский",
 
 const T = {
 en:{
- title:"HenkerDPI — DPI bypass for Windows",
- tagline:"DPI bypass for Windows",
+ title:"HenkerDPI — DPI bypass for Windows and macOS",
+ tagline:"DPI bypass for Windows and macOS",
  lede:"Open blocked websites without a VPN. HenkerDPI reshapes the TLS handshake your ISP inspects, right on your own machine — nothing is routed through a remote server, so your connection keeps the speed it already had.",
  download:"Download",
- meta:"Windows 10/11 (64-bit) · 27 MB · free and open source",
+ meta:"Windows 10/11 · macOS 11+ (Apple Silicon &amp; Intel) · free and open source",
  p1h:"No account", p1b:"No sign-up, no subscription, no server to trust.",
  p2h:"No setup", p2b:"Works on every site the moment you switch it on.",
  p3h:"Stays current", p3b:"New versions install themselves.",
- installh:"Install",
+ installh:"Install on Windows",
  s1:"Download the app, then right-click it and choose Run as administrator.",
  s2:"Approve the Windows administrator prompt.",
  s3:"Press the power button in the app. You're protected.",
@@ -154,18 +184,26 @@ en:{
  warn:"HenkerDPI is not code-signed, so SmartScreen may show <i>\"Windows protected your PC\"</i> the first time you run it. Choose <b>More info → Run anyway</b>. Some antivirus engines flag DPI-bypass tools by category as well — it is a false positive. Every release publishes its SHA-256, and the full source is public if you would rather build it yourself.",
  portable1:"There is also an ", portablelink:"installer",
  portable2:", but Windows Defender is currently flagging it by mistake. A correction is under review.",
+ dl_win:"Download for Windows",
+ dl_mac:"Download for macOS",
+ mach:"On macOS",
+ macb:"The macOS build is not the Windows one recompiled. macOS has no equivalent of the packet driver the Windows version uses, so it works a different way: it runs a small proxy on your own Mac and reshapes the TLS handshake as it leaves. Nothing is sent to a remote server there either.",
+ m1:"Open the DMG and drag HenkerDPI to Applications.",
+ m2:"The first launch is blocked because the app is not signed by Apple. Right-click it and choose <b>Open</b>, then confirm.",
+ m3:"Press the power button. Approve the macOS password prompt once — it is needed to point your network at the local proxy, and it is undone when you quit.",
+ maccover:"Covers browsers (Safari, Chrome, Firefox, Edge) and Electron apps such as Discord. Command-line tools like curl and git, and Discord voice, do not follow the system proxy and are not affected.",
  license:"MIT licensed", source:"Source on GitHub", releases:"All releases"
 },
 tr:{
- title:"HenkerDPI — Windows için DPI bypass",
- tagline:"Windows için DPI bypass",
+ title:"HenkerDPI — Windows ve macOS için DPI bypass",
+ tagline:"Windows ve macOS için DPI bypass",
  lede:"Engellenen sitelere VPN olmadan gir. HenkerDPI, servis sağlayıcının incelediği TLS el sıkışmasını doğrudan kendi bilgisayarında yeniden düzenler — trafiğin uzak bir sunucudan geçmediği için bağlantın mevcut hızını korur.",
  download:"İndir",
- meta:"Windows 10/11 (64-bit) · 27 MB · ücretsiz ve açık kaynak",
+ meta:"Windows 10/11 · macOS 11+ (Apple Silicon ve Intel) · ücretsiz ve açık kaynak",
  p1h:"Hesap yok", p1b:"Kayıt yok, abonelik yok, güvenmen gereken sunucu yok.",
  p2h:"Ayar yok", p2b:"Açtığın anda bütün sitelerde çalışır.",
  p3h:"Güncel kalır", p3b:"Yeni sürümler kendi kurulur.",
- installh:"Kurulum",
+ installh:"Windows'ta kurulum",
  s1:"Uygulamayı indir, sağ tıkla ve Yönetici olarak çalıştır de.",
  s2:"Windows'un yönetici iznini onayla.",
  s3:"Uygulamadaki güç düğmesine bas. Koruma başlar.",
@@ -173,18 +211,26 @@ tr:{
  warn:"HenkerDPI dijital olarak imzalanmadığı için SmartScreen ilk çalıştırmada <i>\"Windows bilgisayarınızı korudu\"</i> diyebilir. <b>Ek bilgi → Yine de çalıştır</b> seç. Bazı antivirüsler DPI bypass araçlarını kategori olarak işaretler; bu yanlış pozitiftir. Her sürümün SHA-256 değeri yayınlanır ve kaynak kod açıktır — istersen kendin derleyebilirsin.",
  portable1:"Bir de ", portablelink:"kurulum dosyası",
  portable2:" var, ama Windows Defender şu an onu yanlışlıkla işaretliyor. Düzeltme incelemede.",
+ dl_win:"Windows için indir",
+ dl_mac:"macOS için indir",
+ mach:"macOS'ta",
+ macb:"macOS sürümü, Windows sürümünün yeniden derlenmiş hâli değil. macOS'ta Windows'un kullandığı paket sürücüsünün karşılığı yok; bu yüzden farklı çalışıyor: kendi Mac'inizde küçük bir proxy çalıştırıp TLS el sıkışmasını çıkarken yeniden biçimlendiriyor. Burada da hiçbir şey uzak bir sunucuya gönderilmiyor.",
+ m1:"DMG dosyasını açın ve HenkerDPI'yi Applications klasörüne sürükleyin.",
+ m2:"Uygulama Apple tarafından imzalanmadığı için ilk açılış engellenir. Sağ tıklayıp <b>Aç</b> deyin ve onaylayın.",
+ m3:"Güç düğmesine basın. macOS'un şifre sorusunu bir kez onaylayın — ağınızı yerel proxy'ye yönlendirmek için gerekli ve çıkışta geri alınıyor.",
+ maccover:"Tarayıcıları (Safari, Chrome, Firefox, Edge) ve Discord gibi Electron uygulamalarını kapsar. curl, git gibi komut satırı araçları ve Discord sesli görüşme sistem proxy'sini kullanmaz, bu yüzden etkilenmez.",
  license:"MIT lisanslı", source:"GitHub'da kaynak kod", releases:"Tüm sürümler"
 },
 de:{
- title:"HenkerDPI — DPI-Umgehung für Windows",
- tagline:"DPI-Umgehung für Windows",
+ title:"HenkerDPI — DPI-Umgehung für Windows und macOS",
+ tagline:"DPI-Umgehung für Windows und macOS",
  lede:"Öffne gesperrte Websites ohne VPN. HenkerDPI verändert den TLS-Handshake, den dein Anbieter mitliest, direkt auf deinem eigenen Rechner — nichts läuft über einen fremden Server, deine Verbindung behält also ihr Tempo.",
  download:"Herunterladen",
- meta:"Windows 10/11 (64-Bit) · 27 MB · kostenlos und quelloffen",
+ meta:"Windows 10/11 · macOS 11+ (Apple Silicon &amp; Intel) · kostenlos und quelloffen",
  p1h:"Kein Konto", p1b:"Keine Anmeldung, kein Abo, kein Server, dem du vertrauen musst.",
  p2h:"Keine Einrichtung", p2b:"Wirkt auf allen Seiten, sobald du es einschaltest.",
  p3h:"Bleibt aktuell", p3b:"Neue Versionen installieren sich selbst.",
- installh:"Installation",
+ installh:"Installation unter Windows",
  s1:"App herunterladen, rechtsklicken und Als Administrator ausführen wählen.",
  s2:"Die Administratorabfrage von Windows bestätigen.",
  s3:"Im Programm auf den Ein-Schalter drücken. Fertig.",
@@ -192,18 +238,26 @@ de:{
  warn:"HenkerDPI ist nicht signiert, daher zeigt SmartScreen beim ersten Start eventuell <i>„Der Computer wurde durch Windows geschützt“</i>. Wähle <b>Weitere Informationen → Trotzdem ausführen</b>. Manche Virenscanner melden DPI-Werkzeuge grundsätzlich — ein Fehlalarm. Zu jeder Version wird der SHA-256 veröffentlicht, und der Quellcode ist offen, falls du lieber selbst baust.",
  portable1:"Es gibt auch einen ", portablelink:"Installer",
  portable2:", aber Windows Defender meldet ihn derzeit fälschlich. Eine Korrektur wird geprüft.",
+ dl_win:"Für Windows herunterladen",
+ dl_mac:"Für macOS herunterladen",
+ mach:"Unter macOS",
+ macb:"Die macOS-Version ist keine neu kompilierte Windows-Version. macOS hat kein Gegenstück zum Paket-Treiber der Windows-Fassung, deshalb arbeitet sie anders: Sie startet einen kleinen Proxy auf Ihrem eigenen Mac und formt den TLS-Handshake beim Verlassen um. Auch hier wird nichts an einen entfernten Server geschickt.",
+ m1:"Das DMG öffnen und HenkerDPI in den Ordner „Programme“ ziehen.",
+ m2:"Der erste Start wird blockiert, weil die App nicht von Apple signiert ist. Rechtsklick, <b>Öffnen</b> wählen und bestätigen.",
+ m3:"Den Ein-/Aus-Knopf drücken. Die Passwortabfrage von macOS einmal bestätigen — sie richtet das Netzwerk auf den lokalen Proxy aus und wird beim Beenden zurückgenommen.",
+ maccover:"Deckt Browser (Safari, Chrome, Firefox, Edge) und Electron-Apps wie Discord ab. Kommandozeilen-Werkzeuge wie curl und git sowie Discord-Sprachchat folgen dem System-Proxy nicht und bleiben unberührt.",
  license:"MIT-Lizenz", source:"Quellcode auf GitHub", releases:"Alle Versionen"
 },
 ru:{
- title:"HenkerDPI — обход DPI для Windows",
- tagline:"Обход DPI для Windows",
+ title:"HenkerDPI — обход DPI для Windows и macOS",
+ tagline:"обход DPI для Windows и macOS",
  lede:"Открывайте заблокированные сайты без VPN. HenkerDPI меняет TLS-рукопожатие, которое проверяет провайдер, прямо на вашем компьютере — трафик не идёт через чужой сервер, поэтому скорость соединения остаётся прежней.",
  download:"Скачать",
- meta:"Windows 10/11 (64-бит) · 27 МБ · бесплатно, открытый код",
+ meta:"Windows 10/11 · macOS 11+ (Apple Silicon и Intel) · бесплатно и с открытым кодом",
  p1h:"Без аккаунта", p1b:"Ни регистрации, ни подписки, ни сервера, которому надо доверять.",
  p2h:"Без настройки", p2b:"Работает на всех сайтах сразу после включения.",
  p3h:"Обновляется сам", p3b:"Новые версии устанавливаются автоматически.",
- installh:"Установка",
+ installh:"Установка в Windows",
  s1:"Скачайте приложение, нажмите правой кнопкой и выберите Запуск от имени администратора.",
  s2:"Подтвердите запрос прав администратора.",
  s3:"Нажмите кнопку питания в приложении. Готово.",
@@ -211,18 +265,26 @@ ru:{
  warn:"HenkerDPI не подписан цифровой подписью, поэтому при первом запуске SmartScreen может показать <i>«Система Windows защитила ваш компьютер»</i>. Выберите <b>Подробнее → Выполнить в любом случае</b>. Некоторые антивирусы помечают инструменты обхода DPI по категории — это ложное срабатывание. Для каждой версии публикуется SHA-256, а исходный код открыт, если вы предпочитаете собрать сами.",
  portable1:"Есть и ", portablelink:"установщик",
  portable2:", но Windows Defender сейчас ошибочно его помечает. Исправление на рассмотрении.",
+ dl_win:"Скачать для Windows",
+ dl_mac:"Скачать для macOS",
+ mach:"На macOS",
+ macb:"Версия для macOS — не пересобранная версия для Windows. В macOS нет аналога пакетного драйвера, который использует версия для Windows, поэтому она работает иначе: запускает небольшой прокси на вашем Mac и меняет форму TLS-рукопожатия на выходе. Здесь тоже ничего не отправляется на удалённый сервер.",
+ m1:"Откройте DMG и перетащите HenkerDPI в папку «Программы».",
+ m2:"Первый запуск блокируется, потому что приложение не подписано Apple. Нажмите правой кнопкой, выберите <b>Открыть</b> и подтвердите.",
+ m3:"Нажмите кнопку питания. Один раз подтвердите запрос пароля macOS — он нужен, чтобы направить сеть на локальный прокси, и отменяется при выходе.",
+ maccover:"Охватывает браузеры (Safari, Chrome, Firefox, Edge) и приложения на Electron, например Discord. Консольные инструменты вроде curl и git, а также голосовой чат Discord не используют системный прокси и не затрагиваются.",
  license:"Лицензия MIT", source:"Исходный код на GitHub", releases:"Все версии"
 },
 ja:{
- title:"HenkerDPI — Windows 向け DPI 回避ツール",
- tagline:"Windows 向け DPI 回避ツール",
+ title:"HenkerDPI — Windows・macOS 向け DPI 回避ツール",
+ tagline:"Windows・macOS 向け DPI 回避ツール",
  lede:"VPN なしでブロックされたサイトを開けます。HenkerDPI は、プロバイダが検査する TLS ハンドシェイクをあなたの PC 上で組み替えます。通信を外部サーバー経由にしないため、回線速度はそのままです。",
  download:"ダウンロード",
- meta:"Windows 10/11（64ビット）· 27 MB · 無料・オープンソース",
+ meta:"Windows 10/11 · macOS 11+（Apple Silicon・Intel）· 無料・オープンソース",
  p1h:"アカウント不要", p1b:"登録も月額料金も、信頼すべきサーバーもありません。",
  p2h:"設定不要", p2b:"オンにした瞬間からすべてのサイトで機能します。",
  p3h:"自動で最新に", p3b:"新しいバージョンは自動でインストールされます。",
- installh:"インストール",
+ installh:"Windows でのインストール",
  s1:"アプリをダウンロードし、右クリックして「管理者として実行」を選びます。",
  s2:"Windows の管理者確認を承認します。",
  s3:"アプリの電源ボタンを押します。これで保護されます。",
@@ -230,18 +292,26 @@ ja:{
  warn:"HenkerDPI はコード署名されていないため、初回起動時に SmartScreen が <i>「Windows によって PC が保護されました」</i> と表示することがあります。<b>詳細情報 → 実行</b> を選んでください。一部のウイルス対策ソフトは DPI 回避ツールを一律に検出しますが、これは誤検出です。各リリースでは SHA-256 を公開しており、ソースコードも公開されているため、自分でビルドすることもできます。",
  portable1:"", portablelink:"インストーラー",
  portable2:"もありますが、現在 Windows Defender が誤検知しており、修正を申請中です。",
+ dl_win:"Windows 版をダウンロード",
+ dl_mac:"macOS 版をダウンロード",
+ mach:"macOS では",
+ macb:"macOS 版は Windows 版を再ビルドしたものではありません。macOS には Windows 版が使うパケットドライバに相当する仕組みがないため、別の方法をとっています。お使いの Mac 上で小さなプロキシを動かし、送信される TLS ハンドシェイクを組み替えます。こちらも通信を外部サーバーには送りません。",
+ m1:"DMG を開き、HenkerDPI を「アプリケーション」フォルダにドラッグします。",
+ m2:"Apple の署名がないため初回起動はブロックされます。右クリックして <b>開く</b> を選び、確認してください。",
+ m3:"電源ボタンを押します。macOS のパスワード確認を一度だけ承認してください。ネットワークをローカルプロキシに向けるために必要で、終了時に元へ戻ります。",
+ maccover:"ブラウザ（Safari、Chrome、Firefox、Edge）と Discord などの Electron アプリに対応します。curl や git などのコマンドラインツール、および Discord の音声通話はシステムプロキシを使わないため対象外です。",
  license:"MIT ライセンス", source:"GitHub のソースコード", releases:"すべてのリリース"
 },
 zh:{
- title:"HenkerDPI — Windows 上的 DPI 绕过工具",
- tagline:"Windows 上的 DPI 绕过工具",
+ title:"HenkerDPI — Windows 与 macOS 上的 DPI 绕过工具",
+ tagline:"Windows 与 macOS 上的 DPI 绕过工具",
  lede:"无需 VPN 即可打开被屏蔽的网站。HenkerDPI 在你自己的电脑上重组运营商检查的 TLS 握手包——流量不经过任何远程服务器，因此连接速度保持不变。",
  download:"下载",
- meta:"Windows 10/11（64 位）· 27 MB · 免费开源",
+ meta:"Windows 10/11 · macOS 11+（Apple Silicon 与 Intel）· 免费开源",
  p1h:"无需账号", p1b:"不注册、不订阅，也没有需要信任的服务器。",
  p2h:"无需配置", p2b:"开启后立即对所有网站生效。",
  p3h:"自动更新", p3b:"新版本会自行安装。",
- installh:"安装",
+ installh:"在 Windows 上安装",
  s1:"下载应用，右键点击并选择以管理员身份运行。",
  s2:"在 Windows 管理员提示中点击允许。",
  s3:"点击应用中的电源按钮，即可开始保护。",
@@ -249,18 +319,26 @@ zh:{
  warn:"HenkerDPI 未经代码签名，首次运行时 SmartScreen 可能显示 <i>“Windows 已保护你的电脑”</i>。请选择 <b>更多信息 → 仍要运行</b>。部分杀毒软件会按类别标记 DPI 绕过工具，这是误报。每个版本都会公布 SHA-256，源代码完全公开，你也可以自行编译。",
  portable1:"另有", portablelink:"安装程序",
  portable2:"，但 Windows Defender 目前误报，修正申请正在处理。",
+ dl_win:"下载 Windows 版",
+ dl_mac:"下载 macOS 版",
+ mach:"在 macOS 上",
+ macb:"macOS 版并不是把 Windows 版重新编译一遍。macOS 没有 Windows 版所用封包驱动的对应机制，因此它的做法不同：在你自己的 Mac 上运行一个小型代理，在数据发出时重组 TLS 握手。同样，不会把任何流量发往远程服务器。",
+ m1:"打开 DMG，把 HenkerDPI 拖到“应用程序”文件夹。",
+ m2:"由于应用未经 Apple 签名，首次打开会被阻止。右键点击并选择<b>打开</b>，然后确认。",
+ m3:"按下电源按钮。确认一次 macOS 的密码提示——它用于把网络指向本地代理，退出时会自动还原。",
+ maccover:"覆盖浏览器（Safari、Chrome、Firefox、Edge）以及 Discord 等 Electron 应用。curl、git 等命令行工具和 Discord 语音不使用系统代理，因此不受影响。",
  license:"MIT 许可证", source:"GitHub 源代码", releases:"全部版本"
 },
 hi:{
- title:"HenkerDPI — Windows के लिए DPI बायपास",
- tagline:"Windows के लिए DPI बायपास",
+ title:"HenkerDPI — Windows और macOS के लिए DPI बायपास",
+ tagline:"Windows और macOS के लिए DPI बायपास",
  lede:"बिना VPN के ब्लॉक की गई वेबसाइटें खोलें। HenkerDPI आपके अपने कंप्यूटर पर ही उस TLS हैंडशेक को बदल देता है जिसे आपका ISP जाँचता है — ट्रैफ़िक किसी बाहरी सर्वर से नहीं गुज़रता, इसलिए आपकी स्पीड वैसी ही रहती है।",
  download:"डाउनलोड करें",
- meta:"Windows 10/11 (64-बिट) · 27 MB · मुफ़्त और ओपन सोर्स",
+ meta:"Windows 10/11 · macOS 11+ (Apple Silicon और Intel) · मुफ़्त और ओपन सोर्स",
  p1h:"अकाउंट नहीं", p1b:"न रजिस्ट्रेशन, न सब्सक्रिप्शन, न किसी सर्वर पर भरोसा।",
  p2h:"सेटअप नहीं", p2b:"चालू करते ही हर वेबसाइट पर काम करता है।",
  p3h:"खुद अपडेट", p3b:"नए वर्ज़न अपने आप इंस्टॉल हो जाते हैं।",
- installh:"इंस्टॉल करें",
+ installh:"Windows पर इंस्टॉल करें",
  s1:"ऐप डाउनलोड करें, राइट-क्लिक करें और Run as administrator चुनें।",
  s2:"Windows की एडमिनिस्ट्रेटर अनुमति स्वीकार करें।",
  s3:"ऐप में पावर बटन दबाएँ। सुरक्षा शुरू।",
@@ -268,18 +346,26 @@ hi:{
  warn:"HenkerDPI कोड-साइन नहीं है, इसलिए पहली बार चलाने पर SmartScreen <i>\"Windows protected your PC\"</i> दिखा सकता है। <b>More info → Run anyway</b> चुनें। कुछ एंटीवायरस DPI बायपास टूल्स को श्रेणी के आधार पर फ़्लैग करते हैं — यह ग़लत अलार्म है। हर रिलीज़ का SHA-256 प्रकाशित होता है और सोर्स कोड खुला है, आप चाहें तो खुद बिल्ड कर सकते हैं।",
  portable1:"एक ", portablelink:"इंस्टॉलर",
  portable2:" भी है, लेकिन Windows Defender फ़िलहाल उसे ग़लती से फ़्लैग कर रहा है। सुधार समीक्षाधीन है।",
+ dl_win:"Windows के लिए डाउनलोड करें",
+ dl_mac:"macOS के लिए डाउनलोड करें",
+ mach:"macOS पर",
+ macb:"macOS संस्करण Windows संस्करण को दोबारा कंपाइल करके नहीं बनाया गया है। macOS में उस पैकेट ड्राइवर जैसा कुछ नहीं है जिसे Windows संस्करण इस्तेमाल करता है, इसलिए यह अलग तरीके से काम करता है: यह आपके अपने Mac पर एक छोटा प्रॉक्सी चलाता है और बाहर जाते समय TLS हैंडशेक को बदल देता है। यहाँ भी कुछ भी किसी बाहरी सर्वर पर नहीं भेजा जाता।",
+ m1:"DMG खोलें और HenkerDPI को Applications फ़ोल्डर में खींचें।",
+ m2:"ऐप पर Apple का हस्ताक्षर न होने के कारण पहली बार खोलना रोका जाएगा। राइट-क्लिक करके <b>Open</b> चुनें और पुष्टि करें।",
+ m3:"पावर बटन दबाएँ। macOS का पासवर्ड संकेत एक बार स्वीकार करें — यह आपके नेटवर्क को लोकल प्रॉक्सी की ओर भेजने के लिए ज़रूरी है और बंद करने पर वापस हो जाता है।",
+ maccover:"ब्राउज़र (Safari, Chrome, Firefox, Edge) और Discord जैसे Electron ऐप्स को कवर करता है। curl और git जैसे कमांड-लाइन टूल तथा Discord वॉइस सिस्टम प्रॉक्सी का उपयोग नहीं करते, इसलिए वे प्रभावित नहीं होते।",
  license:"MIT लाइसेंस", source:"GitHub पर सोर्स कोड", releases:"सभी रिलीज़"
 },
 da:{
- title:"HenkerDPI — DPI-omgåelse til Windows",
- tagline:"DPI-omgåelse til Windows",
+ title:"HenkerDPI — DPI-omgåelse til Windows og macOS",
+ tagline:"DPI-omgåelse til Windows og macOS",
  lede:"Åbn blokerede websider uden VPN. HenkerDPI omformer det TLS-håndtryk, din udbyder kigger på, direkte på din egen maskine — intet sendes gennem en fremmed server, så din forbindelse beholder sin hastighed.",
  download:"Hent",
- meta:"Windows 10/11 (64-bit) · 27 MB · gratis og open source",
+ meta:"Windows 10/11 · macOS 11+ (Apple Silicon og Intel) · gratis og open source",
  p1h:"Ingen konto", p1b:"Ingen tilmelding, intet abonnement, ingen server du skal stole på.",
  p2h:"Ingen opsætning", p2b:"Virker på alle sider, så snart du tænder for det.",
  p3h:"Holder sig opdateret", p3b:"Nye versioner installerer sig selv.",
- installh:"Installation",
+ installh:"Installation på Windows",
  s1:"Hent appen, højreklik på den, og vælg Kør som administrator.",
  s2:"Godkend Windows' administratorprompt.",
  s3:"Tryk på tænd-knappen i appen. Så er du beskyttet.",
@@ -287,6 +373,14 @@ da:{
  warn:"HenkerDPI er ikke kodesigneret, så SmartScreen kan vise <i>\"Windows protected your PC\"</i>, første gang du kører det. Vælg <b>More info → Run anyway</b>. Nogle antivirusprogrammer markerer DPI-værktøjer som kategori — det er en falsk alarm. Hver udgivelse offentliggør sin SHA-256, og kildekoden er åben, hvis du hellere selv vil bygge.",
  portable1:"Der findes også et ", portablelink:"installationsprogram",
  portable2:", men Windows Defender markerer det i øjeblikket fejlagtigt. En rettelse er under behandling.",
+ dl_win:"Hent til Windows",
+ dl_mac:"Hent til macOS",
+ mach:"På macOS",
+ macb:"macOS-versionen er ikke Windows-versionen kompileret om. macOS har ingen pendant til den pakkedriver, Windows-versionen bruger, så den arbejder anderledes: den kører en lille proxy på din egen Mac og omformer TLS-håndtrykket på vej ud. Heller ikke her sendes noget til en fjern server.",
+ m1:"Åbn DMG-filen, og træk HenkerDPI over i Programmer.",
+ m2:"Første start blokeres, fordi appen ikke er signeret af Apple. Højreklik, vælg <b>Åbn</b>, og bekræft.",
+ m3:"Tryk på tænd/sluk-knappen. Godkend macOS' adgangskodeprompt én gang — den peger dit netværk mod den lokale proxy og fortrydes, når du lukker programmet.",
+ maccover:"Dækker browsere (Safari, Chrome, Firefox, Edge) og Electron-apps som Discord. Kommandolinjeværktøjer som curl og git samt Discord-tale bruger ikke systemproxyen og påvirkes derfor ikke.",
  license:"MIT-licens", source:"Kildekode på GitHub", releases:"Alle udgivelser"
 }
 };
@@ -310,6 +404,18 @@ function apply(code){
   sel.value = code;
 }
 
+// Lead with the button for the machine the visitor is actually on. The other
+// stays clickable -- someone may be downloading for a different computer.
+function highlightPlatform(){
+  const ua = navigator.userAgent;
+  const isMac = /Mac|iPhone|iPad/.test(ua) && !/Windows/.test(ua);
+  const win = document.getElementById("dl-win");
+  const mac = document.getElementById("dl-mac");
+  (isMac ? win : mac).classList.add("secondary");
+  const row = document.querySelector(".dlrow");
+  if (isMac) row.insertBefore(mac, win);
+}
+
 function pick(){
   const saved = localStorage.getItem("hdpi_lang");
   if (saved && T[saved]) return saved;
@@ -326,6 +432,7 @@ sel.addEventListener("change", () => {
 });
 
 apply(pick());
+highlightPlatform();
 </script>
 </body>
 </html>

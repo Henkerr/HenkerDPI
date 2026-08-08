@@ -1,0 +1,104 @@
+name: Build macOS
+
+# The macOS bundle cannot be cross-built from Windows, so a real macOS runner is
+# what makes the download on the releases page a genuine artifact rather than an
+# untested promise. It runs on every push so a break is caught when it is
+# introduced, and attaches the DMG when a tag is pushed.
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple Silicon and Intel need separate bundles: PyInstaller collects
+          # the interpreter and C extensions for the architecture it runs on,
+          # and there is no universal2 CPython on the runners.
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-13
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Only the cross-platform runtime deps. pydivert is Windows-only and
+          # requirements.txt pins it, so it cannot be installed here.
+          pip install customtkinter==5.2.2 Pillow==12.2.0 pyinstaller==6.11.1
+
+      - name: Verify the macOS engine imports and the core logic holds
+        run: python tools/selftest_macos.py
+
+      - name: Build the icon
+        run: |
+          mkdir -p icon.iconset
+          for size in 16 32 64 128 256 512; do
+            sips -z $size $size icon.png --out icon.iconset/icon_${size}x${size}.png
+            sips -z $((size*2)) $((size*2)) icon.png \
+              --out icon.iconset/icon_${size}x${size}@2x.png
+          done
+          iconutil -c icns icon.iconset -o icon.icns
+
+      - name: Build the app
+        run: python -m PyInstaller HenkerDPI-macos.spec --clean -y
+
+      - name: Sign
+        run: |
+          # Ad-hoc signing is not optional on Apple Silicon: an unsigned bundle
+          # is killed at exec rather than merely warned about. It gives no
+          # Gatekeeper trust -- users still clear the quarantine flag -- but it
+          # is what lets the binary run at all.
+          codesign --force --deep --sign - dist/HenkerDPI.app
+          codesign --verify --verbose dist/HenkerDPI.app
+
+      - name: Smoke-test the bundle
+        run: |
+          set -e
+          # Proves the frozen bundle can actually import its own engine, which
+          # is the failure PyInstaller's static analysis misses when the import
+          # sits behind a sys.platform branch.
+          dist/HenkerDPI.app/Contents/MacOS/HenkerDPI --selftest
+          echo "bundle selftest OK"
+
+      - name: Package the DMG
+        run: |
+          mkdir -p dmg-root
+          cp -R dist/HenkerDPI.app dmg-root/
+          ln -s /Applications dmg-root/Applications
+          cp packaging/"Ag Ayarlarini Geri Yukle.command" dmg-root/ || true
+          hdiutil create -volname "HenkerDPI" -srcfolder dmg-root -ov \
+            -format UDZO "HenkerDPI-macOS-${{ matrix.arch }}.dmg"
+          shasum -a 256 "HenkerDPI-macOS-${{ matrix.arch }}.dmg" \
+            > "HenkerDPI-macOS-${{ matrix.arch }}.dmg.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HenkerDPI-macOS-${{ matrix.arch }}
+          path: |
+            HenkerDPI-macOS-${{ matrix.arch }}.dmg
+            HenkerDPI-macOS-${{ matrix.arch }}.dmg.sha256
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            HenkerDPI-macOS-${{ matrix.arch }}.dmg
+            HenkerDPI-macOS-${{ matrix.arch }}.dmg.sha256

@@ -16,8 +16,19 @@ import time
 import math
 import webbrowser
 
-from main import BypassEngine, is_admin
-from doh import restore_dns_from_journal
+IS_MAC = sys.platform == "darwin"
+
+if IS_MAC:
+    # Same interface, different machinery: a local desync proxy instead of a
+    # packet-level filter, because macOS has no WinDivert. The macOS build
+    # never repoints system DNS, so there is no DNS journal to replay either.
+    from macos.engine import BypassEngine, is_admin
+
+    def restore_dns_from_journal(log=print):
+        return False
+else:
+    from main import BypassEngine, is_admin
+    from doh import restore_dns_from_journal
 from lang import LANGUAGES, load_lang_pref, save_lang_pref, t
 from config import (
     load_custom_domains, save_custom_domains, load_settings, save_settings,
@@ -55,8 +66,9 @@ FONT = "Helvetica"
 GREEN = "#4ade80"
 RED = "#f87171"
 
-# Hide console windows for subprocess calls
-_CF = subprocess.CREATE_NO_WINDOW
+# Hide console windows for subprocess calls. The flag exists only on Windows;
+# on macOS there is no console to hide and passing it would raise.
+_CF = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def _autostart_target():
@@ -1308,6 +1320,9 @@ class HenkerDPIApp(ctk.CTk):
         autostart, so compare the task's action against the current target and
         re-register when they differ.
         """
+        if IS_MAC:
+            self._auto_var.set(False)
+            return
         had_legacy = self._migrate_legacy_autostart()
         try:
             r = subprocess.run(
@@ -1333,6 +1348,14 @@ class HenkerDPIApp(ctk.CTk):
             pass
 
     def _toggle_auto(self):
+        if IS_MAC:
+            # Login items on macOS mean a LaunchAgent, and an agent that starts
+            # the engine before the user is at the keyboard would raise the
+            # admin prompt at login with nobody to answer it. Left out rather
+            # than shipped broken.
+            self._auto_var.set(False)
+            self._log_queue.put(t("autostart_unsupported", self._lang))
+            return
         if self._auto_var.get():
             r = subprocess.run([
                 "schtasks", "/create", "/tn", SERVICE_NAME,
@@ -1424,43 +1447,93 @@ def _release_single_instance():
     one is still alive, and would otherwise bounce off its own guard.
     """
     global _mutex_handle
-    import ctypes as ct
     h, _mutex_handle = _mutex_handle, None
-    if h:
+    if not h:
+        return
+    if IS_MAC:
         try:
-            ct.windll.kernel32.ReleaseMutex(h)
-            ct.windll.kernel32.CloseHandle(h)
+            h.close()               # releases the flock with the descriptor
         except Exception:
             pass
+        return
+    import ctypes as ct
+    try:
+        ct.windll.kernel32.ReleaseMutex(h)
+        ct.windll.kernel32.CloseHandle(h)
+    except Exception:
+        pass
+
+
+def _claim_single_instance_mac(deadline):
+    """An exclusive flock on a file in the user's own state directory.
+
+    The lock is released by the kernel when the process dies however it dies,
+    so a crashed run cannot lock the user out of their own app.
+    """
+    global _mutex_handle
+    import fcntl
+    from config import STATE_DIR
+    path = os.path.join(STATE_DIR, "henkerdpi.lock")
+    while True:
+        handle = open(path, "w")
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _mutex_handle = handle
+            return True
+        except OSError:
+            handle.close()
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.5)
 
 
 def main():
-    import ctypes as ct
     global _mutex_handle
 
-    # Global\ so the guard also blocks a second ELEVATED instance in another
-    # user session (Fast User Switching) — both would otherwise race the same
-    # machine-wide DNS journal. Admin token carries SeCreateGlobalPrivilege.
+    # Runs inside the built bundle in CI. It has to come before the GUI and the
+    # instance guard, because the point is to prove the frozen app can import
+    # its own engine on a machine with no display and no user.
+    if "--selftest" in sys.argv:
+        if IS_MAC:
+            from macos.selftest import run
+            sys.exit(run())
+        print("--selftest is macOS-only")
+        sys.exit(0)
+
     # After an update the outgoing process may still be exiting, so --updated
     # waits for it rather than reporting a false "already running".
     deadline = time.time() + (15 if "--updated" in sys.argv else 0)
-    while True:
-        _mutex_handle = ct.windll.kernel32.CreateMutexW(None, True, _MUTEX_NAME)
-        if ct.windll.kernel32.GetLastError() != 183:
-            break
-        if _mutex_handle:
-            ct.windll.kernel32.CloseHandle(_mutex_handle)
-            _mutex_handle = None
-        if time.time() >= deadline:
+
+    if IS_MAC:
+        if not _claim_single_instance_mac(deadline):
             messagebox.showinfo("HenkerDPI", t("already_running"))
             sys.exit(0)
-        time.sleep(0.5)
+    else:
+        import ctypes as ct
+        # Global\ so the guard also blocks a second ELEVATED instance in another
+        # user session (Fast User Switching) — both would otherwise race the
+        # same machine-wide DNS journal. Admin token carries
+        # SeCreateGlobalPrivilege.
+        while True:
+            _mutex_handle = ct.windll.kernel32.CreateMutexW(
+                None, True, _MUTEX_NAME)
+            if ct.windll.kernel32.GetLastError() != 183:
+                break
+            if _mutex_handle:
+                ct.windll.kernel32.CloseHandle(_mutex_handle)
+                _mutex_handle = None
+            if time.time() >= deadline:
+                messagebox.showinfo("HenkerDPI", t("already_running"))
+                sys.exit(0)
+            time.sleep(0.5)
 
     if not is_admin():
         messagebox.showerror("HenkerDPI", t("admin_required"))
         sys.exit(1)
 
-    ct.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Henkerr.HenkerDPI.V2")
+    if not IS_MAC:
+        ct.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "Henkerr.HenkerDPI.V2")
 
     # Heal DNS left pinned by a previous crashed/force-killed run, so a stale
     # 1.1.1.1 override is reverted as soon as the app launches — even if the

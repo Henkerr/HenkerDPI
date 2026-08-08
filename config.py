@@ -15,7 +15,11 @@ APP_VERSION = "2.7.0"
 # Repository the updater queries. Both are validated at download time so a
 # tampered API response cannot point the downloader at an arbitrary host.
 GITHUB_REPO = "Henkerr/HenkerDPI"
-RELEASE_ASSET_NAME = "HenkerDPI.exe"
+# One release carries both platforms, so the asset the updater looks for depends
+# on which build is asking. The macOS bundle is not swapped in place the way the
+# Windows exe is — see updater.can_self_update.
+RELEASE_ASSET_NAME = ("HenkerDPI.exe" if os.name == "nt"
+                      else "HenkerDPI-macOS.dmg")
 
 # PyInstaller onefile: __file__ points inside the ephemeral _MEIxxxx temp dir
 # Windows deletes on exit, so the exe's own directory is the pre-2.3 anchor.
@@ -25,15 +29,49 @@ else:
     _APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+def resolve_home() -> str:
+    """The invoking user's home, even when the process was elevated.
+
+    The macOS build needs root for pfctl, so it is started through sudo or
+    osascript. Both leave HOME pointing at /var/root, which would scatter
+    settings, the autotune cache and the language choice somewhere the user
+    cannot see and cannot keep — every elevated run would look like a fresh
+    install. SUDO_USER names who actually asked, so prefer their home and only
+    fall back to expanduser when we were not elevated.
+    """
+    user = os.environ.get("SUDO_USER")
+    if user and user != "root":
+        try:
+            import pwd
+            return pwd.getpwnam(user).pw_dir
+        except (ImportError, KeyError):
+            base = "/Users" if sys.platform == "darwin" else "/home"
+            cand = os.path.join(base, user)
+            if os.path.isdir(cand):
+                return cand
+    return os.path.expanduser("~")
+
+
 def state_dir() -> str:
     """Per-user writable directory for preferences and the DNS journal.
 
-    An installed build lives under Program Files, where writing next to the exe
-    requires admin, makes preferences machine-wide instead of per-user, and can
-    be refused outright by Controlled Folder Access. %LOCALAPPDATA% is the right
-    home for both; fall back to the app dir only if it cannot be created.
+    An installed build lives under Program Files (or /Applications), where
+    writing next to the binary requires admin, makes preferences machine-wide
+    instead of per-user, and on Windows can be refused outright by Controlled
+    Folder Access. Each platform's per-user location is the right home for both;
+    fall back to the app dir only if it cannot be created.
+
+    macOS matters twice over here: the app is launched with sudo/osascript for
+    pfctl, so $HOME would otherwise become /var/root and the user's settings
+    would vanish the moment the engine starts. resolve_home() undoes that.
     """
-    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    if sys.platform == "darwin":
+        base = os.path.join(resolve_home(), "Library", "Application Support")
+    elif os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or resolve_home()
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+            resolve_home(), ".config")
     d = os.path.join(base, "HenkerDPI")
     try:
         os.makedirs(d, exist_ok=True)

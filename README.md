@@ -4,17 +4,19 @@
 
 # HenkerDPI
 
-**General-purpose DPI bypass for Windows**
+**General-purpose DPI bypass for Windows and macOS**
 
 [![Windows](https://img.shields.io/badge/Windows-10%2F11-blue?logo=windows)](https://github.com/Henkerr/HenkerDPI)
+[![macOS](https://img.shields.io/badge/macOS-11%2B-black?logo=apple)](https://github.com/Henkerr/HenkerDPI)
 [![Python](https://img.shields.io/badge/python-3.10%2B-yellow?logo=python)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ### [⬇ Download HenkerDPI](https://github.com/Henkerr/HenkerDPI/releases/latest)
 
-<sub>Windows 10/11 64-bit · run as administrator · updates itself from then on</sub>
+<sub>Windows 10/11 64-bit · macOS 11+ on Apple Silicon or Intel</sub>
 
-<sub>Grab `HenkerDPI.exe` from the assets on that page. Every release publishes its SHA-256.</sub>
+<sub>Pick your file from the assets on that page — `HenkerDPI.exe` for Windows,
+`HenkerDPI-macOS-arm64.dmg` or `-x86_64.dmg` for a Mac. Every release publishes its SHA-256.</sub>
 
 </div>
 
@@ -170,15 +172,31 @@ python main.py -v        # Verbose mode (log every bypass)
 
 ```
 HenkerDPI/
-├── gui.py             — CustomTkinter GUI (themes, animations, controls)
-├── main.py            — BypassEngine (WinDivert packet interception)
-├── strategies.py      — DPI bypass logic (SNI extraction, fragmentation)
+├── gui.py             — CustomTkinter GUI, shared; picks the engine per platform
 ├── config.py          — Categories, resolvers, settings + state-dir management
-├── doh.py             — Secure DNS manager: crash-safe resolver switching (netsh/PowerShell)
 ├── lang.py            — Multi-language support (8 languages)
+├── sni.py             — ClientHello parsing + bypass scope (shared, no platform deps)
+├── dnsq.py            — DNS-over-HTTPS resolver with a TTL cache (shared)
+├── tunecache.py       — Per-network memory of the measured strategy (shared)
 ├── updater.py         — GitHub release check, verified download, in-place swap
+│
+├── main.py            — Windows BypassEngine (WinDivert packet interception)
+├── strategies.py      — Windows packet surgery (decoy, fragmentation)
+├── autotune.py        — Windows per-line strategy measurement
+├── doh.py             — Windows secure DNS: crash-safe resolver switching
+│
+├── macos/             — the macOS half; imports the shared modules, copies none
+│   ├── engine.py      — BypassEngine with the same interface as main.py's
+│   ├── proxy.py       — local listener: PAC + HTTP CONNECT + SOCKS5
+│   ├── desync.py      — handshake reshaping (TLS records, segments, disorder)
+│   ├── sysproxy.py    — networksetup with a crash-safe restore journal
+│   ├── autotune_mac.py— per-line measurement of the framing technique
+│   └── selftest.py    — offline wiring checks, run against the built .app
+│
 ├── launch.bat         — run from source, self-elevating (dev convenience)
-├── HenkerDPI.spec     — PyInstaller build definition
+├── HenkerDPI.spec     — PyInstaller build definition (Windows)
+├── HenkerDPI-macos.spec — PyInstaller build definition (macOS .app)
+├── packaging/         — the manual network-restore script shipped in the DMG
 ├── setup.iss          — Inno Setup installer script
 ├── licenses/          — LGPL/GPL texts for the bundled third-party components
 ├── docs/              — the download page at henkerr.github.io/HenkerDPI
@@ -187,8 +205,11 @@ HenkerDPI/
 ```
 
 Preferences (`settings.json`, `custom_domains.json`, `lang_pref.json`,
-`theme_pref.json`) and the crash-safe DNS journal live in
-`%LOCALAPPDATA%\HenkerDPI\`.
+`theme_pref.json`) and the crash-safe restore journal live in
+`%LOCALAPPDATA%\HenkerDPI\` on Windows and
+`~/Library/Application Support/HenkerDPI/` on macOS. The macOS path resolves to
+the logged-in user's home even when the app is elevated, so an admin prompt
+never strands settings under `/var/root`.
 
 ## HenkerDPI V1 vs V2
 
@@ -202,13 +223,74 @@ Preferences (`settings.json`, `custom_domains.json`, `lang_pref.json`,
 
 ## macOS
 
-An experimental macOS port (scapy + pf + `networksetup`) lives on the
+Download the DMG for your Mac from [Releases](../../releases) — `arm64` for Apple
+Silicon, `x86_64` for Intel — drag the app to Applications, then **right-click it
+and choose Open** the first time. The app is not signed by Apple, so a plain
+double-click is refused.
+
+Start it and approve the macOS password prompt once. That prompt points your
+network at HenkerDPI's own local proxy; quitting the app puts the setting back.
+
+### It is not the Windows engine recompiled
+
+macOS has no equivalent of WinDivert, and its `pf` is a fork of OpenBSD pf 4.1
+with no `divert-to`, so the Windows approach — intercept the outbound
+ClientHello in the kernel and inject a decoy packet beside it — has nothing to
+build on. The macOS build works a different way: it runs a proxy on `127.0.0.1`,
+registers it with macOS as a proxy auto-config (PAC) URL, and reshapes each TLS
+handshake as it forwards it. Traffic still never leaves your machine for anyone
+else's server.
+
+**What that costs, stated plainly:**
+
+- **The decoy packet does not exist on macOS.** The Windows engine's strongest
+  move sends a fake ClientHello carrying the *same* TCP sequence number as the
+  real one, so the decoy occupies no sequence space. From an ordinary socket
+  that is impossible, and macOS has no `TCP_REPAIR` to rewind the sequence
+  number with. The macOS build therefore relies on reshaping the handshake:
+  splitting the ClientHello across TLS records, across TCP segments, or sending
+  the first segment with a hop limit too low to reach the server so the DPI sees
+  the pieces out of order.
+- **Coverage is browsers and Electron apps.** Safari, Chrome, Firefox, Edge and
+  apps like Discord follow the system proxy. `curl`, `git`, `npm`, `brew` and
+  `ssh` read `http_proxy` instead and are untouched. Discord *voice* is raw UDP
+  and never passes through the proxy.
+- **A third-party VPN takes precedence.** When a VPN's `utun` interface becomes
+  primary, macOS scopes proxy settings to it and HenkerDPI is bypassed.
+- **No DNS changes at all.** The proxy resolves over DNS-over-HTTPS in-process,
+  so unlike the Windows build there is no system resolver to switch and nothing
+  to restore. This is deliberate: it removes the failure that leaves a machine
+  with no working DNS.
+
+### If your network settings ever look wrong
+
+They should not — the app restores them on quit, and because it registers a PAC
+rather than a fixed proxy, macOS falls back to a direct connection whenever the
+app is not running. If you want to reset by hand anyway, the DMG contains
+**`Ag Ayarlarini Geri Yukle.command`**; double-click it and enter your password.
+
+### macOS — From Source
+
+```bash
+pip install customtkinter Pillow pyinstaller
+python tools/selftest_macos.py          # offline wiring checks
+python -m PyInstaller HenkerDPI-macos.spec --clean -y
+codesign --force --deep --sign - dist/HenkerDPI.app
+# Output: dist/HenkerDPI.app
+```
+
+Ad-hoc signing is not cosmetic on Apple Silicon: an unsigned bundle is killed at
+exec rather than merely warned about. Releases are built by
+[`.github/workflows/build-macos.yml`](.github/workflows/build-macos.yml) on real
+macOS runners, one per architecture.
+
+The abandoned first attempt on the
 [`macos-experimental`](https://github.com/Henkerr/HenkerDPI/tree/macos-experimental)
-branch. It is **not maintained and not recommended**: the reliability fixes shipped
-in 2.1.0/2.2.0 — the crash-safe DNS journal, authenticated journal ownership, the
-resolver reachability probe and the decoy-packet checksum fix — were never
-backported to it, so it still carries the intermittent-disconnect bug that those
-releases fixed on Windows. Treat it as source to build on, not as a release.
+branch is superseded and should not be used. It sniffed packets with scapy,
+which cannot reshape a handshake that has already been sent, and it duplicated
+`config.py`, `lang.py`, `gui.py` and `strategies.py` into its own directory —
+copies that were seventeen commits stale by the time it was dropped. The current
+port shares those modules instead of copying them.
 
 ## Changelog
 
