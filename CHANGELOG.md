@@ -7,6 +7,48 @@ each one publishes the SHA-256 of its assets.
 
 ---
 
+## Unreleased
+
+macOS is supported again, as a real build rather than an experiment.
+
+### Added
+- **macOS 11+ on Apple Silicon and Intel.** It is not the Windows engine recompiled. macOS has no
+  WinDivert and its `pf` is a fork of OpenBSD pf 4.1 with no `divert-to`, so there is nothing to
+  intercept an outbound ClientHello with. The Mac build instead runs a desync proxy on `127.0.0.1`
+  and registers it with macOS as a proxy auto-config (PAC) URL, reshaping each TLS handshake as it
+  forwards it. Traffic still never leaves the machine for anyone else's server.
+- A PAC rather than a fixed proxy setting, deliberately: macOS treats an unreachable PAC as "no
+  proxy", so a crash costs the bypass and nothing else. Every `PROXY` decision the PAC returns also
+  carries a `DIRECT` fallback, which covers the case a browser has already cached the PAC body and
+  the listener behind it is gone.
+- `.github/workflows/build-macos.yml` builds and attaches an arm64 and an x86_64 DMG on a real
+  macOS runner, since the bundle cannot be cross-built from Windows.
+- Recovery script shipped in the DMG (`Ag Ayarlarini Geri Yukle.command`) that clears every proxy
+  mechanism per network service, for the case the app never got to undo its own change.
+
+### Fixed
+- **Re-applying the proxy overwrote the record of the user's original settings.** Switching mode or
+  toggling a category re-applies while the engine is running, and the snapshot taken at that moment
+  reads back HenkerDPI's own PAC. It was then written down as what to restore to, so quitting
+  reinstalled a dead PAC and the user's real proxy and bypass-domain list were gone for good. The
+  record is now written once.
+- Quitting reported "proxy off" without turning it off when that record was missing: the restore
+  script came out empty and an empty script was read as success. The Mac now falls back to clearing
+  the PAC from every service.
+- Quitting could skip the restore entirely. Cleanup ran under a non-blocking lock, so the exit
+  handler returned immediately while the engine thread was still inside the password prompt, and
+  interpreter shutdown then froze that thread mid-restore.
+
+### Changed
+- The updater tells a Mac about a new version and opens the release page instead of installing it.
+  An `.app` is a signed bundle, not a single file: swapping it from inside itself would invalidate
+  its signature and leave an app that cannot launch at all.
+- Download page and README no longer promise self-installing updates on both platforms, and the
+  macOS first-run instructions now use **System Settings → Privacy & Security → Open Anyway**.
+  macOS 15 removed the right-click-Open shortcut the old instructions relied on.
+
+---
+
 ## 2.7.0 — 2026-08-06
 
 The app no longer ships a guess about which desync beats your ISP. It measures your line and

@@ -20,9 +20,11 @@
 
 </div>
 
-A general-purpose DPI (Deep Packet Inspection) bypass tool for **Windows**. Access any blocked website freely without a VPN.
+A general-purpose DPI (Deep Packet Inspection) bypass tool for **Windows** and **macOS**. Access any blocked website freely without a VPN.
 
-HenkerDPI works at the packet level — it manipulates TLS handshake packets to prevent ISP-level DPI systems from detecting and blocking your connections. Unlike a VPN, it adds virtually zero latency and doesn't route your traffic through external servers.
+HenkerDPI manipulates the TLS handshake so ISP-level DPI systems cannot detect and block your connections. Unlike a VPN, it adds virtually zero latency and doesn't route your traffic through external servers.
+
+The two builds reach that same result differently, because the platforms allow different things. On Windows it works at the packet level, rewriting handshake packets in flight through a kernel driver. macOS has no equivalent hook — there is no WinDivert, and its firewall cannot hand an outbound connection to a local program — so the Mac build runs a small bypass proxy on your own machine and points macOS at it. Nothing leaves your computer either way.
 
 ## Features
 
@@ -90,7 +92,11 @@ from source*), but no installer is attached to 2.7.0.
 
 ### Updates
 
-From 2.4.0 on, HenkerDPI checks GitHub once a day and shows a banner when a newer release exists. One click downloads it, verifies its SHA-256 against the digest GitHub publishes for the asset, swaps the executable and restarts. Turn it off with `"update_check_enabled": false` in `%LOCALAPPDATA%\HenkerDPI\settings.json` if you would rather update by hand.
+Both builds check GitHub once a day and show a banner when a newer release exists.
+
+On **Windows**, from 2.4.0 on, one click finishes the job: it downloads the new exe, verifies its SHA-256 against the digest GitHub publishes for the asset, swaps the executable and restarts. Turn it off with `"update_check_enabled": false` in `%LOCALAPPDATA%\HenkerDPI\settings.json`.
+
+On **macOS** the banner takes you to the release page and you install the new DMG yourself. An `.app` is a signed bundle, not a single file, so replacing it from inside itself would break its signature and leave an app that will not launch. The setting lives in `~/Library/Application Support/HenkerDPI/settings.json`.
 
 > **SmartScreen & Antivirus:** the exe is unsigned and injects packets via a kernel driver, so Windows SmartScreen may show *"Windows protected your PC"* on first run — click **More info → Run anyway**. Some antivirus engines also flag DPI-bypass tools as potentially unwanted; this is a false positive. If you prefer, build it yourself from source (below) or scan the exe on [VirusTotal](https://www.virustotal.com).
 
@@ -224,9 +230,13 @@ never strands settings under `/var/root`.
 ## macOS
 
 Download the DMG for your Mac from [Releases](../../releases) — `arm64` for Apple
-Silicon, `x86_64` for Intel — drag the app to Applications, then **right-click it
-and choose Open** the first time. The app is not signed by Apple, so a plain
-double-click is refused.
+Silicon, `x86_64` for Intel — and drag the app to Applications.
+
+The app is not signed by Apple, so the first launch is refused. Open **System
+Settings → Privacy & Security**, scroll to the bottom, and click **Open Anyway**
+next to HenkerDPI. On macOS 14 and earlier you can right-click the app and choose
+**Open** instead; macOS 15 removed that shortcut, which is why the longer path is
+the one written here.
 
 Start it and approve the macOS password prompt once. That prompt points your
 network at HenkerDPI's own local proxy; quitting the app puts the setting back.
@@ -274,6 +284,18 @@ app is not running. If you want to reset by hand anyway, the DMG contains
 ```bash
 pip install customtkinter Pillow pyinstaller
 python tools/selftest_macos.py          # offline wiring checks
+
+# The .icns is generated, not committed. No 64 in the list: iconutil validates
+# every name against Apple's iconset table, which has no icon_64x64 entry, and
+# one unrecognized name aborts the conversion. The 64px image still gets made,
+# as icon_32x32@2x.png.
+mkdir -p icon.iconset
+for size in 16 32 128 256 512; do
+  sips -z $size $size icon.png --out icon.iconset/icon_${size}x${size}.png
+  sips -z $((size*2)) $((size*2)) icon.png --out icon.iconset/icon_${size}x${size}@2x.png
+done
+iconutil -c icns icon.iconset -o icon.icns
+
 python -m PyInstaller HenkerDPI-macos.spec --clean -y
 codesign --force --deep --sign - dist/HenkerDPI.app
 # Output: dist/HenkerDPI.app
