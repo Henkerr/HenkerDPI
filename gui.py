@@ -806,19 +806,24 @@ class HenkerDPIApp(ctk.CTk):
 
         def on_touchpad(event):
             widget = event.widget
-            # A Text has its own TouchpadScroll class binding and scrolls
-            # itself; letting this run too would drag the page behind the log at
-            # the same time.
             try:
+                # A Text has its own TouchpadScroll class binding and scrolls
+                # itself; running this as well would drag the page behind the
+                # log at the same time.
                 if widget.winfo_class() == "Text":
                     return
+                # Anything in another toplevel is someone else's business - an
+                # option-menu dropdown, a dialog.
+                if widget.winfo_toplevel() is not self:
+                    return
             except (AttributeError, tk.TclError):
-                pass
-            # Same containment test customtkinter applies to the wheel, so a
-            # gesture outside the scrollable area is ignored.
-            check = getattr(self._scroll, "check_if_master_is_canvas", None)
-            if check is not None and not check(widget):
                 return
+            # Deliberately no containment test beyond the window. customtkinter
+            # gates its wheel handler on the widget descending from the canvas,
+            # which excludes the scrollbar itself -- and a gesture with the
+            # pointer over the scrollbar is a normal way to scroll. This window
+            # holds exactly one scrollable area and it fills the window, so
+            # every gesture in it means that one.
             try:
                 _dx, dy = self.tk.call("tk::PreciseScrollDeltas", event.delta)
                 dy = int(self.tk.call("tk::ScaleNum", int(dy)))
