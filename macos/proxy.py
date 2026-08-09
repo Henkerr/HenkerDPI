@@ -147,9 +147,14 @@ class DesyncProxy:
             self._thread = None
 
     def _accept_loop(self):
+        # Hold the socket locally. stop() sets self._server to None right after
+        # closing it, and reading the attribute here would then raise
+        # AttributeError instead of the OSError this catches — killing the
+        # thread through an unhandled exception rather than ending it.
+        server = self._server
         while not self._stop.is_set():
             try:
-                client, _ = self._server.accept()
+                client, _ = server.accept()
             except OSError:
                 break                      # listener closed by stop()
             if not self._slots.acquire(blocking=False):

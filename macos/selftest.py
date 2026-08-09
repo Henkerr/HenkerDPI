@@ -188,6 +188,57 @@ def run(log=print) -> int:
                                      % name)
     check("environment proxy symmetry", env_vars_symmetric)
 
+    # 6e. Our own leftovers must never be journalled as the user's settings.
+    #     launchctl variables outlive the process, so a force-killed run leaves
+    #     ours in the session; recording those as "the original" and restoring
+    #     them on exit points every tool that reads them — git, npm, curl,
+    #     Discord's updater — at a listener that stopped existing runs ago. The
+    #     services journal is written once to avoid exactly this, and write-once
+    #     cannot help here because the leftovers precede the first write.
+    def env_leftovers_not_ours():
+        from macos import sysproxy
+        ours = "http://127.0.0.1:60395"
+        if not sysproxy._is_ours(ours, ours):
+            raise AssertionError("the URL we publish was not recognised as ours")
+        # A loopback proxy nothing answers on cannot be a working setting.
+        dead = "http://127.0.0.1:1"          # nothing listens on port 1
+        if not sysproxy._is_ours(dead, ""):
+            raise AssertionError("a dead loopback proxy was treated as the user's")
+        # Somebody else's proxy is theirs, and must survive.
+        for theirs in ("http://proxy.corp.example:3128", "http://10.0.0.1:8080"):
+            if sysproxy._is_ours(theirs, ours):
+                raise AssertionError("a real proxy was discarded: %s" % theirs)
+        if sysproxy._loopback_port("http://proxy.corp.example:3128") is not None:
+            raise AssertionError("a remote host was read as loopback")
+        if sysproxy._loopback_port("http://127.0.0.1:8080") != 8080:
+            raise AssertionError("the loopback port was misread")
+    check("our leftovers are not the user's settings", env_leftovers_not_ours)
+
+    # 6f. A restore that did not take must be reportable, not silent.
+    def env_restore_reports():
+        from macos import sysproxy
+        store = {"HTTPS_PROXY": "http://127.0.0.1:1"}
+        real = sysproxy._launchctl
+
+        def fake(*args):
+            if args[0] == "getenv":
+                return True, store.get(args[1], "")
+            if args[0] == "setenv":
+                store[args[1]] = args[2]
+                return True, ""
+            if args[0] == "unsetenv":
+                return False, ""      # refuses, as a failing launchctl would
+            return True, ""
+
+        sysproxy._launchctl = fake
+        try:
+            stuck = sysproxy.restore_env({})
+        finally:
+            sysproxy._launchctl = real
+        if "HTTPS_PROXY" not in stuck:
+            raise AssertionError("a variable that would not clear was not reported")
+    check("a stuck environment variable is reported", env_restore_reports)
+
     # 7. State must land in the user's Library, never under /var/root.
     def state():
         import os

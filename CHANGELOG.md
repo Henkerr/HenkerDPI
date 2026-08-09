@@ -7,6 +7,42 @@ each one publishes the SHA-256 of its assets.
 
 ---
 
+## 2.8.1 — 2026-08-10
+
+Everything found by actually using 2.8.0 on a Mac for an evening.
+
+### Fixed
+- **Two-finger scrolling did nothing.** Tk 9 reports trackpad gestures as `<TouchpadScroll>`, carrying
+  precise pixel deltas, and no longer as the `<MouseWheel>` a mouse produces; customtkinter predates
+  Tk 9 and binds only the latter, so the scrollbar had to be dragged by hand. Measured rather than
+  assumed — an instrumented window received 25+ `TouchpadScroll` events and not one `MouseWheel`.
+  Scrolling now also works with the pointer over the scrollbar, which is where people put it when
+  they mean to scroll.
+- **A force-killed run poisoned the next one's idea of the user's settings.** `launchctl` variables
+  outlive the process that set them, so a run that did not exit cleanly leaves HenkerDPI's own proxy
+  variables in the login session. The next run recorded those as *the user's original environment*
+  and faithfully restored them on exit — pointing the session at a listener that had stopped existing
+  two runs earlier, and breaking `git`, `npm`, `curl` and Discord's updater until the next logout.
+  This is the environment-side twin of the settings bug 2.8.0 fixed for network services, where
+  writing the journal once was the answer; that cannot help here, because the leftovers are already
+  in place before the first write. Ours are now recognised and excluded — both the exact URL being
+  published and any loopback proxy nothing is listening on, while a live local proxy that belongs to
+  the user is preserved.
+- The proxy's accept loop read `self._server` after `stop()` had set it to `None`, raising
+  `AttributeError` where an `OSError` was expected and killing the thread through an unhandled
+  exception instead of ending it.
+- A stop that fails to close the local listener, or to clear the environment, now says so. Both were
+  swallowed — `except Exception: pass` around the one, and a `launchctl` wrapper that folds every
+  failure into a value nobody reads around the other — so a stop could report success while leaving
+  the port the PAC and the environment still name wide open.
+
+### Known
+- The macOS build is tested on Intel. CI builds and runs its selftest on Apple Silicon every time, so
+  the bundle is known to launch and import there, but nobody has yet used it interactively on an
+  M-series Mac.
+
+---
+
 ## 2.8.0 — 2026-08-09
 
 macOS is supported again, as a real build rather than an experiment.

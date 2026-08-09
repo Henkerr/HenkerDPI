@@ -21,6 +21,7 @@ Deliberately absent, and not oversights:
 
 import atexit
 import signal
+import socket
 import threading
 import time
 
@@ -36,6 +37,15 @@ NET_WATCH_INTERVAL = 15.0
 # user takes their time over (run_privileged gives osascript 180s), but bounded
 # so a prompt nobody ever answers cannot keep the process alive forever.
 CLEANUP_LOCK_TIMEOUT = 200.0
+
+
+def _still_listening(port: int, timeout: float = 0.35) -> bool:
+    """Is something still accepting on this loopback port?"""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout):
+            return True
+    except OSError:
+        return False
 
 
 def is_admin() -> bool:
@@ -191,11 +201,17 @@ class BypassEngine:
             except Exception as e:
                 self._log("[!] Proxy geri alinamadi: %s" % e)
             if self._proxy is not None:
+                port = self._proxy.port
                 try:
                     self._proxy.stop()
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Never silent. A listener that outlives the engine is the
+                    # port the PAC and the environment still name, so a stop
+                    # that leaves one has not stopped anything.
+                    self._log("[!] Yerel proxy kapatilamadi: %s" % e)
                 self._proxy = None
+                if port and _still_listening(port):
+                    self._log("[!] Yerel proxy hala dinliyor: %d" % port)
             # Latch only on a restore that actually happened. A cancelled
             # password prompt has to leave the next caller free to try again —
             # the user's network is still pointed at us until one succeeds.

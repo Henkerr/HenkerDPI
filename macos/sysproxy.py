@@ -19,6 +19,7 @@ running as root would put the user's own settings under /var/root.
 import json
 import os
 import shlex
+import socket
 import subprocess
 
 from config import STATE_DIR
@@ -311,12 +312,69 @@ def _launchctl(*args) -> tuple:
     return done.returncode == 0, (done.stdout or "").strip()
 
 
-def env_snapshot() -> dict:
-    """Whatever these variables held before we touched them."""
+def _loopback_port(url: str):
+    """The port of a loopback proxy URL, or None if it is not one."""
+    text = (url or "").strip()
+    for prefix in ("http://", "https://", ""):
+        if text.startswith(prefix):
+            rest = text[len(prefix):]
+            break
+    host, _, port = rest.partition(":")
+    if host not in ("127.0.0.1", "localhost", "::1", "[::1]"):
+        return None
+    port = port.split("/")[0]
+    return int(port) if port.isdigit() else None
+
+
+def _is_ours(value: str, ours: str) -> bool:
+    """Is this environment value one WE published rather than the user's own?
+
+    launchctl variables outlive the process that set them, so a run that was
+    force-killed leaves ours in the session. Recording those as "what the user
+    had" is the same trap the services journal is written once to avoid - except
+    write-once cannot help here, because the leftovers are already in place
+    before the first write. Restoring them on exit leaves the session pointed at
+    a listener that stopped existing runs ago, and every tool that reads these
+    variables - git, npm, curl, Discord's updater - fails until the next logout.
+
+    Two tests, because either alone is wrong. Matching the URL we are about to
+    publish catches the case where a previous run happened to get the same
+    ephemeral port. A loopback proxy nothing is listening on cannot be a working
+    setting whoever set it - so it is not worth carrying forward either. A live
+    local proxy that belongs to the user (mitmproxy, a corporate agent) fails
+    both tests and is preserved.
+    """
+    text = (value or "").strip()
+    if not text:
+        return False
+    if ours and text == ours.strip():
+        return True
+    port = _loopback_port(text)
+    if port is None:
+        return False
+    return not _reachable_locally(port)
+
+
+def _reachable_locally(port: int, timeout: float = 0.35) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout):
+            return True
+    except OSError:
+        return False
+
+
+def env_snapshot(ours: str = "") -> dict:
+    """Whatever these variables held before we touched them, ours excluded."""
     out = {}
     for name in _ENV_VARS:
         ok, value = _launchctl("getenv", name)
-        out[name] = value if ok else ""
+        value = value if ok else ""
+        if name in _ENV_NO_PROXY_VARS:
+            # Ours is a fixed string; anything else is the user's.
+            value = "" if value.strip() == _ENV_NO_PROXY else value
+        elif _is_ours(value, ours):
+            value = ""
+        out[name] = value
     return out
 
 
@@ -328,14 +386,29 @@ def apply_env(proxy_url: str) -> None:
         _launchctl("setenv", name, _ENV_NO_PROXY)
 
 
-def restore_env(saved: dict) -> None:
-    """Put the variables back. No recorded original means unset, not empty."""
+def restore_env(saved: dict) -> list:
+    """Put the variables back, and report any that would not go.
+
+    No recorded original means unset, not empty. Returns the names that still
+    hold something other than what was asked for: _launchctl folds every failure
+    into a tuple nobody reads, so without checking, a session left pointing at a
+    listener that is going away is invisible — and the next program started from
+    it fails with nothing to explain why.
+    """
     for name in _ENV_VARS:
         previous = (saved or {}).get(name) or ""
         if previous:
             _launchctl("setenv", name, previous)
         else:
             _launchctl("unsetenv", name)
+
+    stuck = []
+    for name in _ENV_VARS:
+        want = ((saved or {}).get(name) or "").strip()
+        _ok, now = _launchctl("getenv", name)
+        if (now or "").strip() != want:
+            stuck.append(name)
+    return stuck
 
 
 def run_privileged(script: str, prompt: str) -> tuple:
@@ -384,7 +457,9 @@ class SystemProxy:
         self._log("[*] Onceki oturumdan kalan proxy ayari geri aliniyor")
         # Unprivileged and cannot be refused, so it happens before the dialog:
         # a cancelled password prompt must still take the stale variables down.
-        restore_env(env_saved)
+        stuck = restore_env(env_saved)
+        if stuck:
+            self._log("[!] Ortam degiskenleri temizlenemedi: %s" % ", ".join(stuck))
         ok, err = run_privileged(
             _restore_script(services_saved),
             "HenkerDPI needs to restore your previous proxy settings.")
@@ -416,7 +491,7 @@ class SystemProxy:
         if not self.active and not _read_journal():
             try:
                 _write_journal({"services": snapshot(),
-                                "env": env_snapshot()})
+                                "env": env_snapshot(proxy_url)})
             except OSError as e:
                 self._log("[!] Yedek yazilamadi, degisiklik yapilmadi: %s" % e)
                 return False
@@ -455,7 +530,9 @@ class SystemProxy:
         # privileges and cannot be refused, so it survives a cancelled password
         # dialog. Leaving them pointed at a listener that is going away is what
         # would break git, npm and Discord in every session started afterwards.
-        restore_env(env_saved)
+        stuck = restore_env(env_saved)
+        if stuck:
+            self._log("[!] Ortam degiskenleri temizlenemedi: %s" % ", ".join(stuck))
         if services_saved:
             script = _restore_script(services_saved)
         else:
