@@ -53,13 +53,14 @@ macOS is supported again, as a real build rather than an experiment.
   ever drops back.
 
 ### Fixed
-- **The app icon was an upscale.** `icon.png` was mastered at 512 px while macOS' iconset asks for
-  1024, so the build enlarged it and every Retina Mac showed a soft icon in the Dock and in Finder.
-  The mark is drawn on a 2048 px canvas, so 1024 costs nothing; regenerated at that size, and
-  `tools/make_wolf_mark.py` masters there from now on.
 - The menu-bar icon was scaled with Tk's `subsample`, which is nearest-neighbour: from 512 to 22 it
   keeps one pixel in 23 and discards the rest, turning a detailed mark into noise at exactly the size
-  where detail matters. It is resampled properly now.
+  where detail is all there is. It is resampled properly now.
+- The app icon is still mastered at 512 px while macOS' iconset table asks for 1024, so the build
+  enlarges it and a Retina Mac shows it slightly soft in the Dock and in Finder. Sharpening it needs
+  the original artwork at a higher resolution: `tools/make_wolf_mark.py` is an unused alternative
+  mark — its own docstring says so — and regenerating from it replaces the logo rather than sharpens
+  it.
 - **Re-applying the proxy overwrote the record of the user's original settings.** Switching mode or
   toggling a category re-applies while the engine is running, and the snapshot taken at that moment
   reads back HenkerDPI's own PAC. It was then written down as what to restore to, so quitting
