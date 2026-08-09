@@ -24,9 +24,13 @@ jobs:
           # Apple Silicon and Intel need separate bundles: PyInstaller collects
           # the interpreter and C extensions for the architecture it runs on,
           # and there is no universal2 CPython on the runners.
-          - runner: macos-14
+          # macos-15-intel is the last x86_64 image Actions offers; it is
+          # supported to August 2027, after which an Intel bundle can no longer
+          # be built here and the "Apple Silicon & Intel" promise on the
+          # download page has to be revisited.
+          - runner: macos-15
             arch: arm64
-          - runner: macos-13
+          - runner: macos-15-intel
             arch: x86_64
     runs-on: ${{ matrix.runner }}
     steps:
@@ -49,7 +53,11 @@ jobs:
       - name: Build the icon
         run: |
           mkdir -p icon.iconset
-          for size in 16 32 64 128 256 512; do
+          # No 64 in the list: iconutil validates every filename against Apple's
+          # iconset table, which has no icon_64x64 entry, and one unrecognized
+          # name aborts the whole conversion. The 64px image is still produced,
+          # as icon_32x32@2x.png.
+          for size in 16 32 128 256 512; do
             sips -z $size $size icon.png --out icon.iconset/icon_${size}x${size}.png
             sips -z $((size*2)) $((size*2)) icon.png \
               --out icon.iconset/icon_${size}x${size}@2x.png
