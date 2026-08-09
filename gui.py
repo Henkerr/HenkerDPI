@@ -49,6 +49,14 @@ try:
 except ImportError:
     HAS_TRAY = False
 
+if IS_MAC:
+    # pystray's macOS backend drives an NSStatusItem, and AppKit only allows
+    # that from the main thread — which tkinter's event loop already owns, so
+    # _show_tray starts it in a worker. The shipped bundle does not carry
+    # pystray, but a from-source install can, and then HAS_TRAY would be True:
+    # _on_close would withdraw the window and hand the user no way back to it.
+    HAS_TRAY = False
+
 ctk.set_appearance_mode("dark")
 
 SERVICE_NAME = "HenkerDPI"
@@ -251,7 +259,9 @@ class HenkerDPIApp(ctk.CTk):
 
         icon_path = os.path.join(SCRIPT_DIR, "icon.ico")
         self._icon_png = os.path.join(SCRIPT_DIR, "icon.png")
-        if os.path.exists(icon_path):
+        # .ico is a Windows format and iconbitmap() does nothing on Aqua; the
+        # Mac's icon comes from the bundle's icon.icns instead.
+        if not IS_MAC and os.path.exists(icon_path):
             self.iconbitmap(icon_path)
 
         self._engine = None
@@ -279,7 +289,18 @@ class HenkerDPIApp(ctk.CTk):
         self.after(2500, self._check_update_async)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.bind("<Unmap>", self._on_minimize)
+        if IS_MAC:
+            # Cmd-Q and Dock > Quit do NOT go through WM_DELETE_WINDOW. Tk
+            # turns the Apple Event into Tcl_Exit unless ::tk::mac::Quit
+            # exists, which would skip _quit() and the engine-thread join
+            # behind it — leaving the Mac pointed at a proxy that is gone, the
+            # exact failure the restore path was written to prevent.
+            self.createcommand("::tk::mac::Quit", self._quit)
+        else:
+            # Minimising to the tray is a Windows idiom; on macOS the Dock
+            # already owns it, and there is no tray icon in this build to
+            # restore the window from.
+            self.bind("<Unmap>", self._on_minimize)
 
         # Launched by the boot task (schtasks --autostart): start the engine
         # and go straight to the tray without showing the window.

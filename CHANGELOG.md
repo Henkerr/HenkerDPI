@@ -25,6 +25,19 @@ macOS is supported again, as a real build rather than an experiment.
   macOS runner, since the bundle cannot be cross-built from Windows.
 - Recovery script shipped in the DMG (`Ag Ayarlarini Geri Yukle.command`) that clears every proxy
   mechanism per network service, for the case the app never got to undo its own change.
+- **The proxy is published to the login session's environment as well as the PAC.** A PAC only
+  reaches software that implements PAC, and Discord's updater does not: it is a Rust binary whose
+  HTTP client reads the *fixed* proxy keys only. Measured on a Turkish line, it saw no proxy at all,
+  connected directly, and the DPI reset every handshake — `hyper::Error(Connect, code: -9806)` every
+  30 seconds — so Discord never got past its update screen on the one service this tool exists for.
+  Setting the fixed system proxy instead would have fixed that and broken something worse: Chromium
+  reads the PAC and the fixed rules into one config and falls back to the fixed rules when the PAC
+  cannot be fetched, so a HenkerDPI that died would take every browser down with
+  `ERR_PROXY_CONNECTION_FAILED` — exactly the failure the PAC was chosen to rule out. The session
+  environment reaches the same programs (reqwest, Go, curl, git, npm) while Chromium and CFNetwork
+  ignore it, needs no privileges, and does not survive a logout, so the worst a force-kill can leave
+  behind expires by itself. Software that reads neither the PAC nor the environment is still not
+  covered; nothing available to an unprivileged process on macOS reaches it.
 
 ### Fixed
 - **Re-applying the proxy overwrote the record of the user's original settings.** Switching mode or
@@ -38,6 +51,22 @@ macOS is supported again, as a real build rather than an experiment.
 - Quitting could skip the restore entirely. Cleanup ran under a non-blocking lock, so the exit
   handler returned immediately while the engine thread was still inside the password prompt, and
   interpreter shutdown then froze that thread mid-restore.
+- **Cmd-Q and Dock ▸ Quit skipped the restore.** Tk turns the Quit Apple Event straight into
+  `Tcl_Exit` unless `::tk::mac::Quit` is defined, so neither ever reached `_quit()` or the
+  engine-thread join behind it — the two most natural ways to close a Mac app were the two that left
+  it pointed at a proxy that was gone.
+- **`(null)` was written into System Settings as a PAC URL.** `networksetup -getautoproxyurl`
+  reports a service with no URL as the literal string `(null)`, which is truthy, so the restore ran
+  `-setautoproxyurl <service> '(null)'` and left that permanently visible in the user's network
+  settings. Cleaned on the way in and on the way out, because journals written by the earlier build
+  already contain it and those are the ones a restore has to heal.
+- The tray is switched off on macOS rather than left to chance. pystray drives an `NSStatusItem`,
+  AppKit allows that only from the main thread, and tkinter's event loop owns it — so on a
+  from-source install that happened to have pystray, closing the window withdrew it and left the
+  user no way to get it back. It is no longer a dependency there either.
+- `pip install -r requirements.txt` could not complete on macOS: `pydivert` ships the Windows packet
+  driver and is unconditional. It and `pystray` now carry `sys_platform == "win32"` markers, so the
+  documented from-source path works on both platforms.
 
 ### Changed
 - The updater tells a Mac about a new version and opens the release page instead of installing it.
