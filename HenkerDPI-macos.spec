@@ -76,8 +76,8 @@ app = BUNDLE(
     info_plist={
         'CFBundleName': 'HenkerDPI',
         'CFBundleDisplayName': 'HenkerDPI',
-        'CFBundleShortVersionString': '2.7.0',
-        'CFBundleVersion': '2.7.0',
+        'CFBundleShortVersionString': '2.8.0',
+        'CFBundleVersion': '2.8.0',
         'NSHighResolutionCapable': True,
         # Tkinter is not a background-only app; without this the window can
         # open behind everything else with no Dock icon to click.

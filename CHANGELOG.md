@@ -7,7 +7,7 @@ each one publishes the SHA-256 of its assets.
 
 ---
 
-## Unreleased
+## 2.8.0 — 2026-08-09
 
 macOS is supported again, as a real build rather than an experiment.
 
