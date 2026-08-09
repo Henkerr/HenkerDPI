@@ -312,6 +312,18 @@ def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
 
 
+def can_self_update() -> bool:
+    """Whether this build can swap itself in place.
+
+    Only the Windows exe can. current_exe() on macOS is
+    HenkerDPI.app/Contents/MacOS/HenkerDPI — the bundle's entry binary — so the
+    swap below would drop a .dmg where the Mach-O belongs, invalidate the
+    bundle's signature and leave an app that cannot be launched at all. The Mac
+    is sent to the release page instead.
+    """
+    return is_frozen() and os.name == "nt"
+
+
 def _backup_path() -> str:
     return current_exe() + ".old"
 
@@ -334,8 +346,9 @@ def apply_update(new_exe: str) -> None:
     live exe is moved aside first. If the second move fails the rename is undone
     so the user is never left without an executable.
     """
-    if not is_frozen():
-        raise RuntimeError("in-place update only applies to the packaged exe")
+    if not can_self_update():
+        raise RuntimeError("in-place update only applies to the packaged "
+                           "Windows exe")
 
     cur = current_exe()
     backup = _backup_path()

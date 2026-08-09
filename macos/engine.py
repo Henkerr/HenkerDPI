@@ -30,6 +30,10 @@ from .proxy import DesyncProxy
 from .sysproxy import SystemProxy
 
 NET_WATCH_INTERVAL = 15.0
+# Long enough to cover the privileged restore, including a password dialog the
+# user takes their time over (run_privileged gives osascript 180s), but bounded
+# so a prompt nobody ever answers cannot keep the process alive forever.
+CLEANUP_LOCK_TIMEOUT = 200.0
 
 
 def is_admin() -> bool:
@@ -58,7 +62,10 @@ class BypassEngine:
         self._resolver = dnsq.DohResolver()
         self.stats = {"bypassed": 0, "passed": 0}
         self.running = False
-        self._cleaned = threading.Lock()
+        # Reentrant: a signal can land on a thread that is already inside
+        # _cleanup, and a plain Lock would deadlock it against itself.
+        self._cleaned = threading.RLock()
+        self._cleanup_done = False
 
     # -- settings ----------------------------------------------------------
     def _snapshot(self):
@@ -153,13 +160,23 @@ class BypassEngine:
 
     def _cleanup(self):
         # Reachable from the engine thread, atexit and a signal handler at once.
-        if not self._cleaned.acquire(blocking=False):
+        # Waiting here is the whole point. A non-blocking acquire turns "another
+        # thread is restoring right now" into "skip the restore", and that is
+        # precisely the quit sequence: atexit returned instantly while the
+        # engine thread sat in the osascript password prompt, and interpreter
+        # shutdown then froze that daemon thread mid-restore. The second caller
+        # has to wait for the first to finish instead.
+        if not self._cleaned.acquire(timeout=CLEANUP_LOCK_TIMEOUT):
+            self._log("[!] Geri alma zaman asimina ugradi")
             return
         try:
+            if self._cleanup_done:
+                return
             # Order matters: the proxy setting is what takes a user offline if
             # it is left behind, so it goes first and unconditionally.
+            reverted = False
             try:
-                self._sysproxy.revert()
+                reverted = self._sysproxy.revert()
             except Exception as e:
                 self._log("[!] Proxy geri alinamadi: %s" % e)
             if self._proxy is not None:
@@ -168,6 +185,10 @@ class BypassEngine:
                 except Exception:
                     pass
                 self._proxy = None
+            # Latch only on a restore that actually happened. A cancelled
+            # password prompt has to leave the next caller free to try again —
+            # the user's network is still pointed at us until one succeeds.
+            self._cleanup_done = reverted
         finally:
             self._cleaned.release()
 

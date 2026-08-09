@@ -87,6 +87,15 @@ def run(log=print) -> int:
         for server in resolver.servers:
             if 'host == "%s"' % server not in script:
                 raise AssertionError("resolver %s not DIRECT" % server)
+        # Every PROXY decision must carry its own escape hatch. Browsers cache
+        # the PAC body and only re-fetch on a network change, so a bare PROXY
+        # directive strands every request on a dead port for as long as that
+        # cache lives -- the one failure mode choosing PAC was meant to rule
+        # out.
+        for line in script.splitlines():
+            if "PROXY" in line and "; DIRECT" not in line:
+                raise AssertionError("PROXY without a DIRECT fallback: %s"
+                                     % line.strip())
     check("PAC generation", pac)
 
     # 6. The restore script must put a saved proxy back and quote odd names.
@@ -104,6 +113,15 @@ def run(log=print) -> int:
                 raise AssertionError("missing %r in:\n%s" % (fragment, script))
         if sysproxy._parse_bypass("There aren't any bypass domains set.") != []:
             raise AssertionError("the empty-list sentence was stored as a domain")
+        # Losing the journal must still take our PAC off. _restore_script({})
+        # is empty, and run_privileged treats an empty script as success, so
+        # without this path the app reports "proxy off" to a user whose Mac is
+        # still pointed at a listener that has gone.
+        off = sysproxy._disable_script(["Wi-Fi", "USB 10/100"])
+        for fragment in ("-setautoproxystate Wi-Fi off",
+                         "-setautoproxystate 'USB 10/100' off"):
+            if fragment not in off:
+                raise AssertionError("missing %r in:\n%s" % (fragment, off))
     check("system-proxy restore script", restore)
 
     # 7. State must land in the user's Library, never under /var/root.

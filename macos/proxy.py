@@ -295,7 +295,12 @@ class DesyncProxy:
             + decision + "\n}\n")
 
     def _proxy_directive(self) -> str:
-        return "PROXY 127.0.0.1:%d" % (self.port or 0)
+        # The trailing DIRECT is the same promise the docstring above makes,
+        # extended to the case macOS not fetching the PAC does not cover:
+        # Chromium and Electron cache the PAC body and only re-fetch on a
+        # network change, so between this listener dying and that re-fetch a
+        # bare PROXY directive would strand every request on a dead port.
+        return "PROXY 127.0.0.1:%d; DIRECT" % (self.port or 0)
 
     def pac_url(self) -> str:
         return "http://127.0.0.1:%d/henkerdpi.pac" % (self.port or 0)

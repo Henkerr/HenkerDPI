@@ -52,6 +52,10 @@ except ImportError:
 ctk.set_appearance_mode("dark")
 
 SERVICE_NAME = "HenkerDPI"
+# How long quitting waits for the engine thread to undo its system changes.
+# Generous enough for someone to read a password dialog and type into it, short
+# enough that a dialog left unanswered does not look like a hung app.
+QUIT_JOIN_TIMEOUT = 25.0
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Writable dir for user prefs. SCRIPT_DIR is the read-only _MEIxxxx temp dir in
 # a frozen onefile build (it also holds the bundled icons), so theme/lang prefs
@@ -1236,8 +1240,10 @@ class HenkerDPIApp(ctk.CTk):
     def _do_update(self):
         if self._update_busy or not self._update_info:
             return
-        if not updater.is_frozen():
-            # Running from source: nothing to swap, just show the release.
+        if not updater.can_self_update():
+            # Running from source, or the macOS bundle, which is replaced by
+            # downloading a new DMG rather than swapped in place: show the
+            # release page instead.
             self._open_release_notes()
             return
 
@@ -1431,8 +1437,16 @@ class HenkerDPIApp(ctk.CTk):
             self._quit()
 
     def _quit(self):
+        engine_thread = self._thread       # _stop() drops the reference
         self._stop()
         self._hide_tray()
+        # Let the engine thread put the system back before the interpreter
+        # starts freezing daemon threads. stop() only sets an event; on macOS
+        # the restore behind it is a privileged call the user still has to
+        # approve, and quitting out from under it leaves the Mac pointed at a
+        # proxy that no longer exists.
+        if engine_thread is not None and engine_thread.is_alive():
+            engine_thread.join(timeout=QUIT_JOIN_TIMEOUT)
         self.destroy()
 
 

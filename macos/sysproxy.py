@@ -207,6 +207,22 @@ def _restore_script(saved: dict) -> str:
     return "\n".join(lines)
 
 
+def _disable_script(services) -> str:
+    """Take our PAC off every service without knowing what was there before.
+
+    The last-resort path when the journal is lost: it cannot give the user back
+    a proxy they had, but it does guarantee they are not left pointed at ours.
+    Same set of commands as packaging/Ag Ayarlarini Geri Yukle.command.
+    """
+    lines = []
+    for svc in services:
+        q = shlex.quote(svc)
+        lines.append("networksetup -setautoproxystate %s off" % q)
+        lines.append("networksetup -setproxybypassdomains %s %s"
+                     % (q, " ".join(shlex.quote(d) for d in BYPASS_DOMAINS)))
+    return "\n".join(lines)
+
+
 def run_privileged(script: str, prompt: str) -> tuple:
     """Run a shell script as root, asking the user once via the macOS dialog.
 
@@ -269,18 +285,30 @@ class SystemProxy:
         # Journal BEFORE changing anything. A crash between the write and the
         # change costs a harmless no-op restore; a crash the other way round
         # leaves the user proxied at a port that no longer listens.
-        try:
-            _write_journal(snapshot())
-        except OSError as e:
-            self._log("[!] Yedek yazilamadi, degisiklik yapilmadi: %s" % e)
-            return False
+        #
+        # Write it ONCE. reload_settings() re-applies on every mode switch and
+        # category toggle, and by then snapshot() reads back our own PAC — a
+        # second write would record HenkerDPI's configuration as the user's
+        # original settings and every later restore would faithfully reinstall
+        # it, losing their real proxy and bypass list for good. An existing
+        # journal is likewise left alone: if a restore failed at startup it
+        # still holds the only copy of the true pre-HenkerDPI state.
+        wrote_journal = False
+        if not self.active and not _read_journal():
+            try:
+                _write_journal(snapshot())
+            except OSError as e:
+                self._log("[!] Yedek yazilamadi, degisiklik yapilmadi: %s" % e)
+                return False
+            wrote_journal = True
 
         ok, err = run_privileged(
             _apply_script(pac_url, services),
             "HenkerDPI needs to route this Mac's traffic through its local "
             "bypass proxy.")
         if not ok:
-            clear_journal()
+            if wrote_journal:
+                clear_journal()
             self._log("[!] Proxy ayarlanamadi: %s"
                       % ("izin verilmedi" if err == "cancelled" else err))
             return False
@@ -294,9 +322,21 @@ class SystemProxy:
         if not self.active:
             # Even so, a journal may exist from a crash earlier in this run.
             return self.restore_from_journal()
-        saved = _read_journal() or {}
+        saved = _read_journal()
+        if saved:
+            script = _restore_script(saved)
+        else:
+            # The journal is gone or unreadable, so there is nothing to restore
+            # TO — but our PAC is still registered on every service and must
+            # come off. Without this, _restore_script({}) returns "" and
+            # run_privileged() reports success for an empty script, telling the
+            # user the proxy was turned off while their Mac stays proxied.
+            script = _disable_script(list_services())
+            if not script:
+                self._log("[!] Geri alinacak ag servisi bulunamadi")
+                return False
         ok, err = run_privileged(
-            _restore_script(saved),
+            script,
             "HenkerDPI needs to restore your previous proxy settings.")
         if ok:
             clear_journal()

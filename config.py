@@ -5,6 +5,7 @@ General-purpose DPI bypass. All sites or category-based filtering.
 
 import json
 import os
+import platform
 import sys
 
 # Single source of truth for the running build's version. Keep in sync with
@@ -17,9 +18,12 @@ APP_VERSION = "2.7.0"
 GITHUB_REPO = "Henkerr/HenkerDPI"
 # One release carries both platforms, so the asset the updater looks for depends
 # on which build is asking. The macOS bundle is not swapped in place the way the
-# Windows exe is — see updater.can_self_update.
+# Windows exe is — see updater.can_self_update. The Mac name carries the
+# architecture because the release does: build-macos.yml publishes one DMG per
+# matrix leg, and platform.machine() returns the same arm64/x86_64 the matrix
+# uses (x86_64 under Rosetta too, which is correct — that is the Intel build).
 RELEASE_ASSET_NAME = ("HenkerDPI.exe" if os.name == "nt"
-                      else "HenkerDPI-macOS.dmg")
+                      else "HenkerDPI-macOS-%s.dmg" % platform.machine())
 
 # PyInstaller onefile: __file__ points inside the ephemeral _MEIxxxx temp dir
 # Windows deletes on exit, so the exe's own directory is the pre-2.3 anchor.
