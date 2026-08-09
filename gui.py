@@ -1563,8 +1563,12 @@ class HenkerDPIApp(ctk.CTk):
                          "-button1", self.register(self._restore),
                          "-button3", self.register(self._post_tray_menu))
             return True
-        except (tk.TclError, OSError):
+        except (tk.TclError, OSError) as e:
+            # Never silent: without an icon the window must not be hidden, so
+            # this failure changes what closing the window does. Saying why
+            # beats leaving someone to wonder where their app went.
             self._tray_image = None
+            self._log_queue.put(f"[!] menu bar item: {e}")
             return False
 
     def _post_tray_menu(self):
@@ -1655,7 +1659,12 @@ class HenkerDPIApp(ctk.CTk):
             self.after(100, self._to_background)
 
     def _on_close(self):
-        if self._running and self._show_tray():
+        # On macOS closing a window is not quitting. Once there is a menu-bar
+        # item the app lives there, bypass running or not, and quitting is Cmd-Q
+        # or the item's own Quit entry — anything else surprises people, and it
+        # surprised the first person to try it. On Windows, closing with the
+        # engine off has always meant quit, and that behaviour stays.
+        if (IS_MAC or self._running) and self._show_tray():
             self.withdraw()
             return
         if self._running:
