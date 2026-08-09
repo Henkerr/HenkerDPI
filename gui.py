@@ -11,6 +11,7 @@ import queue
 import subprocess
 import json
 import os
+import plistlib
 import sys
 import time
 import math
@@ -52,9 +53,9 @@ except ImportError:
 if IS_MAC:
     # pystray's macOS backend drives an NSStatusItem, and AppKit only allows
     # that from the main thread — which tkinter's event loop already owns, so
-    # _show_tray starts it in a worker. The shipped bundle does not carry
-    # pystray, but a from-source install can, and then HAS_TRAY would be True:
-    # _on_close would withdraw the window and hand the user no way back to it.
+    # _show_tray would start it in a worker and it would not appear. The Mac
+    # gets its menu-bar item from Tk's own `tk systray` instead (see
+    # _create_tray_mac); this flag governs the pystray path only.
     HAS_TRAY = False
 
 ctk.set_appearance_mode("dark")
@@ -81,6 +82,28 @@ RED = "#f87171"
 # Hide console windows for subprocess calls. The flag exists only on Windows;
 # on macOS there is no console to hide and passing it would raise.
 _CF = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+# macOS login item. A LaunchAgent in the user's own directory, so it needs no
+# privileges to install and cannot affect anyone else on the machine.
+LAUNCH_AGENT_LABEL = "com.henkerr.henkerdpi"
+
+
+def _launch_agent_path() -> str:
+    return os.path.join(os.path.expanduser("~"), "Library", "LaunchAgents",
+                        LAUNCH_AGENT_LABEL + ".plist")
+
+
+def _autostart_argv_mac() -> list:
+    """What launchd should run at login.
+
+    Frozen, this is the bundle's own executable — never SCRIPT_DIR, which in a
+    packaged app points inside the read-only bundle payload rather than at
+    something launchable.
+    """
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--autostart"]
+    return [sys.executable, os.path.join(SCRIPT_DIR, "gui.py"), "--autostart"]
 
 
 def _autostart_target():
@@ -148,6 +171,11 @@ THEME_FILE = resolve_pref("theme_pref.json")
 
 NUM_HOVER_FRAMES = 4
 HOVER_ANIM_MS = 60
+
+# Points, not pixels: the macOS menu bar is 22 points tall and Tk hands the
+# image to AppKit at its natural size, so anything larger is cropped or pushes
+# the bar's other items around.
+TRAY_ICON_PX = 22
 
 
 def _load_theme():
@@ -269,6 +297,9 @@ class HenkerDPIApp(ctk.CTk):
         self._log_queue = queue.Queue()
         self._running = False
         self._tray_icon = None
+        # Tk drops an image the moment nothing in Python refers to it, and a
+        # menu-bar icon whose image has been collected renders as blank.
+        self._tray_image = None
         self._start_time = None
 
         self._hover_frame = 0
@@ -296,6 +327,10 @@ class HenkerDPIApp(ctk.CTk):
             # behind it — leaving the Mac pointed at a proxy that is gone, the
             # exact failure the restore path was written to prevent.
             self.createcommand("::tk::mac::Quit", self._quit)
+            # Clicking the Dock icon of an app whose window is withdrawn does
+            # nothing unless this exists, so it is the second way back from the
+            # menu bar - and the safety net if the icon ever fails to appear.
+            self.createcommand("::tk::mac::ReopenApplication", self._restore)
         else:
             # Minimising to the tray is a Windows idiom; on macOS the Dock
             # already owns it, and there is no tray icon in this build to
@@ -309,13 +344,11 @@ class HenkerDPIApp(ctk.CTk):
 
     def _enter_background(self):
         """Boot autostart: start the bypass and drop to the system tray."""
-        if not self._running:
+        if not self._running and self._settings.get("autostart_engine", False):
             self._start()
-        if HAS_TRAY and HAS_PIL:
-            self._show_tray()
-            if self._tray_icon:          # only hide if a tray icon really exists
-                self.withdraw()
-                return
+        if self._show_tray():
+            self.withdraw()
+            return
         self.iconify()                   # fallback: minimise, stay reachable
 
     def _render_power_frames(self):
@@ -730,6 +763,27 @@ class HenkerDPIApp(ctk.CTk):
                      font=ctk.CTkFont(FONT, 9), text_color=th["fg3"])
         self._version_label.pack(side="right")
 
+        # A second row, macOS only: what the login item does once it has opened
+        # the app. Windows has nothing to ask here — its scheduled task runs
+        # elevated and silently, so it always starts the engine. On a Mac that
+        # same step needs an administrator prompt, and whether one should appear
+        # by itself at every login is the user's call, not ours.
+        self._auto_engine_switch = None
+        if IS_MAC:
+            engine_row = ctk.CTkFrame(self._settings_panel,
+                                      fg_color="transparent")
+            engine_row.pack(fill="x", pady=(6, 0))
+            self._auto_engine_var = ctk.BooleanVar(
+                value=self._settings.get("autostart_engine", False))
+            self._auto_engine_switch = ctk.CTkSwitch(
+                engine_row, text=t("autostart_engine", self._lang),
+                font=ctk.CTkFont(FONT, 10),
+                variable=self._auto_engine_var,
+                command=self._save_autostart_engine,
+                progress_color=th["accent"], button_color=th["fg3"],
+                button_hover_color=th["fg2"])
+            self._auto_engine_switch.pack(side="left")
+
     def _toggle_settings(self):
         """Show/hide the advanced settings panel. Default view stays clean."""
         if self._settings_open:
@@ -826,6 +880,8 @@ class HenkerDPIApp(ctk.CTk):
                 self._filter_btns[key].configure(text=t(label_key, L))
         self._clear_btn.configure(text=t("clear", L))
         self._auto_switch.configure(text=t("autostart", L))
+        if self._auto_engine_switch is not None:
+            self._auto_engine_switch.configure(text=t("autostart_engine", L))
         if self._tray_icon:
             self._hide_tray()
             self._show_tray()
@@ -944,6 +1000,10 @@ class HenkerDPIApp(ctk.CTk):
         self._auto_switch.configure(progress_color=th["accent"],
                                      button_color=th["fg3"],
                                      button_hover_color=th["fg2"])
+        if self._auto_engine_switch is not None:
+            self._auto_engine_switch.configure(progress_color=th["accent"],
+                                               button_color=th["fg3"],
+                                               button_hover_color=th["fg2"])
         self._version_label.configure(text_color=th["fg3"])
 
     # === Power Button ===
@@ -1348,7 +1408,7 @@ class HenkerDPIApp(ctk.CTk):
         re-register when they differ.
         """
         if IS_MAC:
-            self._auto_var.set(False)
+            self._check_autostart_mac()
             return
         had_legacy = self._migrate_legacy_autostart()
         try:
@@ -1376,12 +1436,7 @@ class HenkerDPIApp(ctk.CTk):
 
     def _toggle_auto(self):
         if IS_MAC:
-            # Login items on macOS mean a LaunchAgent, and an agent that starts
-            # the engine before the user is at the keyboard would raise the
-            # admin prompt at login with nobody to answer it. Left out rather
-            # than shipped broken.
-            self._auto_var.set(False)
-            self._log_queue.put(t("autostart_unsupported", self._lang))
+            self._toggle_auto_mac()
             return
         if self._auto_var.get():
             r = subprocess.run([
@@ -1400,7 +1455,135 @@ class HenkerDPIApp(ctk.CTk):
                            capture_output=True, creationflags=_CF)
             self._log_queue.put(t("autostart_removed", self._lang))
 
+    # === Autostart (macOS) ===
+
+    def _check_autostart_mac(self):
+        """Reflect the login item, treating one that points elsewhere as off.
+
+        Same rule as the Windows task: an agent left behind by a build that has
+        since been moved or reinstalled still exists, and still fails at every
+        login. Showing the switch on would hide that, so the stale one is
+        rewritten to the path this build actually runs from.
+        """
+        try:
+            with open(_launch_agent_path(), "rb") as f:
+                saved = plistlib.load(f).get("ProgramArguments") or []
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            self._auto_var.set(False)
+            return
+        self._auto_var.set(True)
+        if list(saved) != _autostart_argv_mac():
+            self._toggle_auto_mac()
+
+    def _toggle_auto_mac(self):
+        path = _launch_agent_path()
+        service = "gui/%d/%s" % (os.getuid(), LAUNCH_AGENT_LABEL)
+        domain = "gui/%d" % os.getuid()
+        if not self._auto_var.get():
+            subprocess.run(["launchctl", "bootout", service], capture_output=True)
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            self._log_queue.put(t("autostart_removed", self._lang))
+            return
+
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as f:
+                plistlib.dump({
+                    "Label": LAUNCH_AGENT_LABEL,
+                    "ProgramArguments": _autostart_argv_mac(),
+                    "RunAtLoad": True,
+                    # Aqua only: launchd would otherwise be entitled to start a
+                    # windowed app in a session that has no screen to put it on.
+                    "LimitLoadToSessionType": "Aqua",
+                    "ProcessType": "Interactive",
+                }, f)
+        except OSError as e:
+            self._auto_var.set(False)
+            self._log_queue.put(f"[!] {e}")
+            return
+
+        # Re-register so the change applies now rather than at the next login.
+        # bootout first because bootstrap refuses a label that is already
+        # loaded; on a clean system it fails and that is the expected path, so
+        # neither result is checked.
+        subprocess.run(["launchctl", "bootout", service], capture_output=True)
+        subprocess.run(["launchctl", "bootstrap", domain, path],
+                       capture_output=True)
+        self._log_queue.put(t("autostart_added", self._lang))
+
+    def _save_autostart_engine(self):
+        self._settings["autostart_engine"] = self._auto_engine_var.get()
+        save_settings(self._settings)
+
     # === Tray ===
+
+    def _tray_supported(self) -> bool:
+        """Is there a place to put an icon the user can actually click?
+
+        This decides whether the window may be hidden at all. Withdrawing it
+        with no icon to bring it back leaves the app running, invisible and
+        unreachable - and the single-instance lock then refuses a relaunch, so
+        the only way out is Force Quit. Never hide without asking this first.
+        """
+        if IS_MAC:
+            try:
+                return bool(self.tk.call("info", "commands", "::tk::systray"))
+            except tk.TclError:
+                return False
+        return HAS_TRAY and HAS_PIL
+
+    def _create_tray_mac(self) -> bool:
+        """Put an item in the menu bar. True only if one really appeared.
+
+        Tk's aqua systray arrived in Tk 9; the 8.6 build has no such command at
+        all, which is why the interpreter is pinned in the macOS workflow. The
+        aqua implementation also takes no -menu, only click callbacks, so the
+        menu is posted by hand from the right-click one.
+        """
+        try:
+            if HAS_PIL and os.path.exists(self._icon_png):
+                # Resample rather than subsample. Tk's subsample() is
+                # nearest-neighbour: going from 512 to 22 it keeps one pixel in
+                # 23 and discards the other 22, which turns a detailed logo into
+                # noise at exactly the size where detail matters most.
+                art = Image.open(self._icon_png).convert("RGBA")
+                art = art.resize((TRAY_ICON_PX, TRAY_ICON_PX), Image.LANCZOS)
+                self._tray_image = ImageTk.PhotoImage(art, master=self)
+            else:
+                source = tk.PhotoImage(file=self._icon_png, master=self)
+                factor = max(1, min(source.width() // TRAY_ICON_PX,
+                                    source.height() // TRAY_ICON_PX))
+                self._tray_image = source.subsample(factor, factor)
+            self.tk.call("tk", "systray", "create",
+                         "-image", self._tray_image,
+                         "-text", "HenkerDPI",
+                         "-button1", self.register(self._restore),
+                         "-button3", self.register(self._post_tray_menu))
+            return True
+        except (tk.TclError, OSError):
+            self._tray_image = None
+            return False
+
+    def _post_tray_menu(self):
+        """Build and post the menu-bar menu.
+
+        Built fresh on every right-click rather than kept and updated, so the
+        start/stop entry can never disagree with the engine.
+        """
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label=t("tray_show", self._lang), command=self._restore)
+        menu.add_command(
+            label=t("tray_stop" if self._running else "tray_start", self._lang),
+            command=self._toggle)
+        menu.add_separator()
+        menu.add_command(label=t("tray_quit", self._lang), command=self._quit)
+        try:
+            menu.tk_popup(self.winfo_pointerx(), self.winfo_pointery())
+        finally:
+            menu.grab_release()
 
     def _create_tray(self):
         if not HAS_TRAY or not HAS_PIL:
@@ -1420,20 +1603,40 @@ class HenkerDPIApp(ctk.CTk):
         )
         return pystray.Icon("HenkerDPI", img, "HenkerDPI", menu)
 
-    def _show_tray(self):
-        if not HAS_TRAY or self._tray_icon:
-            return
-        self._tray_icon = self._create_tray()
+    def _show_tray(self) -> bool:
+        """Raise the icon. Returns whether one is now there to be clicked."""
         if self._tray_icon:
-            threading.Thread(target=self._tray_icon.run, daemon=True).start()
+            return True
+        if not self._tray_supported():
+            return False
+        if IS_MAC:
+            if not self._create_tray_mac():
+                return False
+            self._tray_icon = "systray"      # sentinel; Tk owns the real object
+            return True
+        self._tray_icon = self._create_tray()
+        if not self._tray_icon:
+            return False
+        threading.Thread(target=self._tray_icon.run, daemon=True).start()
+        return True
 
     def _hide_tray(self):
-        if self._tray_icon:
-            self._tray_icon.stop()
-            self._tray_icon = None
+        icon, self._tray_icon = self._tray_icon, None
+        if not icon:
+            return
+        if IS_MAC:
+            try:
+                self.tk.call("tk", "systray", "destroy")
+            except tk.TclError:
+                pass
+            self._tray_image = None
+            return
+        icon.stop()
 
     def _update_tray_menu(self):
-        if self._tray_icon:
+        # The macOS menu is built at the moment it is posted, so it is never
+        # stale and there is nothing to refresh.
+        if self._tray_icon and not IS_MAC:
             self._tray_icon.update_menu()
 
     def _restore(self):
@@ -1442,14 +1645,18 @@ class HenkerDPIApp(ctk.CTk):
         self.lift()
         self.focus_force()
 
+    def _to_background(self):
+        """Hide the window, but only once there is an icon to bring it back."""
+        if self._show_tray():
+            self.withdraw()
+
     def _on_minimize(self, event=None):
-        if self.state() == "iconic" and HAS_TRAY:
-            self.after(100, lambda: [self.withdraw(), self._show_tray()])
+        if self.state() == "iconic" and self._tray_supported():
+            self.after(100, self._to_background)
 
     def _on_close(self):
-        if self._running and HAS_TRAY:
+        if self._running and self._show_tray():
             self.withdraw()
-            self._show_tray()
             return
         if self._running:
             if messagebox.askyesno("HenkerDPI", t("close_confirm", self._lang)):

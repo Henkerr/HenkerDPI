@@ -39,7 +39,27 @@ macOS is supported again, as a real build rather than an experiment.
   behind expires by itself. Software that reads neither the PAC nor the environment is still not
   covered; nothing available to an unprivileged process on macOS reaches it.
 
+- **A menu-bar item, and a login item.** Closing the window no longer quits the app on a Mac: it
+  leaves an icon in the menu bar, left-click to bring the window back, right-click for start/stop and
+  quit. The window is only ever hidden once that icon actually exists — withdrawing it without one
+  would leave the app running, invisible, with the single-instance lock refusing a relaunch. Clicking
+  the Dock icon restores it too. Start-at-login installs a LaunchAgent in the user's own directory
+  and needs no privileges; a separate switch decides whether it also turns the bypass on, off by
+  default because that step needs an administrator prompt and one that appears by itself at every
+  login is worse than one click.
+- The macOS build now ships the same Tcl/Tk the app is developed against. CI used to build against
+  Tk 8.6, whose aqua port has no `tk systray` at all, so the menu-bar item would have worked in
+  development and been silently missing from every DMG. The workflow fails the build if the version
+  ever drops back.
+
 ### Fixed
+- **The app icon was an upscale.** `icon.png` was mastered at 512 px while macOS' iconset asks for
+  1024, so the build enlarged it and every Retina Mac showed a soft icon in the Dock and in Finder.
+  The mark is drawn on a 2048 px canvas, so 1024 costs nothing; regenerated at that size, and
+  `tools/make_wolf_mark.py` masters there from now on.
+- The menu-bar icon was scaled with Tk's `subsample`, which is nearest-neighbour: from 512 to 22 it
+  keeps one pixel in 23 and discards the rest, turning a detailed mark into noise at exactly the size
+  where detail matters. It is resampled properly now.
 - **Re-applying the proxy overwrote the record of the user's original settings.** Switching mode or
   toggling a category re-applies while the engine is running, and the snapshot taken at that moment
   reads back HenkerDPI's own PAC. It was then written down as what to restore to, so quitting

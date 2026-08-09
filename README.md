@@ -13,12 +13,20 @@
 
 ### [⬇ Download HenkerDPI](https://github.com/Henkerr/HenkerDPI/releases/latest)
 
-<sub>Windows 10/11 64-bit · macOS 11+ on Apple Silicon or Intel</sub>
+<sub>One release carries both platforms — pick your file from its assets.</sub>
 
-<sub>Pick your file from the assets on that page — `HenkerDPI.exe` for Windows,
-`HenkerDPI-macOS-arm64.dmg` or `-x86_64.dmg` for a Mac. Every release publishes its SHA-256.</sub>
+<sub>Or use the [download page](https://henkerr.github.io/HenkerDPI/), which leads with your own.</sub>
 
 </div>
+
+| Platform | File on the release | Requirements |
+|---|---|---|
+| **Windows** | `HenkerDPI.exe` | Windows 10/11 64-bit, run as Administrator |
+| **macOS** · Apple Silicon | `HenkerDPI-macOS-arm64.dmg` | macOS 11+ |
+| **macOS** · Intel | `HenkerDPI-macOS-x86_64.dmg` | macOS 11+ |
+
+Every release publishes the SHA-256 of its assets. Installation steps for both are under
+[Installation](#installation).
 
 A general-purpose DPI (Deep Packet Inspection) bypass tool for **Windows** and **macOS**. Access any blocked website freely without a VPN.
 
@@ -35,8 +43,10 @@ The two builds reach that same result differently, because the platforms allow d
 - **Custom Domains** — Add any domain to the bypass list
 - **4 Themes** — Graphite, Iris, Halcyon, Obsidian
 - **8 Languages** — English, Turkish, Hindi, Japanese, Chinese, Russian, German, Danish
-- **System Tray** — Minimize to tray, runs silently in background
-- **Autostart** — Silent, elevated Windows Task Scheduler task
+- **Tray / menu bar** — Closing the window leaves it running in the Windows tray or the macOS menu bar
+- **Autostart** — A Windows scheduled task, or a macOS login item. On a Mac a second switch decides
+  whether the login item also turns the bypass on: doing so needs an administrator prompt, so it is
+  off by default rather than appearing by itself at every login
 
 ## How It Works
 
@@ -69,11 +79,21 @@ By default HenkerDPI bypasses **IPv4 traffic only** — the proven, drop-free pa
 
 ## Installation
 
-### Portable (Recommended right now)
+### Windows
 
 Download **`HenkerDPI.exe`** from [Releases](../../releases) and run it **as Administrator** (right-click → *Run as administrator*). A single file, no installation; the WinDivert driver is bundled inside.
 
-### Installer
+### macOS
+
+Download the DMG for your Mac from [Releases](../../releases) — `arm64` for Apple Silicon,
+`x86_64` for Intel — and drag the app to Applications. The first launch is refused because the app is
+not signed by Apple: open **System Settings → Privacy & Security**, scroll to the bottom and click
+**Open Anyway**. Then press the power button and approve the password prompt once.
+
+That prompt is the only privileged step, and the [macOS section](#macos-1) explains what it changes,
+how the Mac build differs from the Windows one, and how to undo it by hand if you ever need to.
+
+### Windows installer
 
 **Not published for the current release — use the portable download above.**
 

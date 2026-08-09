@@ -92,11 +92,16 @@ def build(size=512):
 
 if __name__ == "__main__":
     here = os.path.join(ROOT, "tools")
-    master = build(512)
+    # 1024, because that is the largest entry macOS' iconset table asks for
+    # (icon_512x512@2x). Mastering at 512 meant the macOS build ran
+    # `sips -z 1024 1024` over it, so the icon a Retina Mac shows in the Dock
+    # and in Finder was an upscale of half the resolution it needed. The canvas
+    # is supersampled at S = 2048, so 1024 costs nothing and invents nothing.
+    master = build(1024)
     master.save(os.path.join(here, "wolf_mark.png"))
     master.resize((256, 256), Image.LANCZOS).save(
         os.path.join(here, "wolf_mark.ico"), sizes=ICO_SIZES)
-    print("wrote tools/wolf_mark.png (512) and .ico", [s[0] for s in ICO_SIZES])
+    print("wrote tools/wolf_mark.png (1024) and .ico", [s[0] for s in ICO_SIZES])
 
     if "--preview" not in sys.argv:
         raise SystemExit(0)

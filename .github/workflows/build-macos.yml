@@ -36,19 +36,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      # uv's CPython, deliberately, and NOT actions/setup-python. That one links
+      # Tcl/Tk 8.6, whose aqua build has no `tk systray` command at all -- so the
+      # menu-bar item works in development and is silently missing from the
+      # bundle users download. It also meant the artifact being tested was not
+      # the artifact being shipped, which is the more general reason to pin the
+      # interpreter to the one the app is developed against.
+      - uses: astral-sh/setup-uv@v6
 
-      - name: Install dependencies
+      - name: Create the environment
         run: |
-          python -m pip install --upgrade pip
+          uv python install 3.11
+          uv venv --python 3.11 .venv
           # Only the cross-platform runtime deps. pydivert is Windows-only and
-          # requirements.txt pins it, so it cannot be installed here.
-          pip install customtkinter==5.2.2 Pillow==12.2.0 pyinstaller==6.11.1
+          # requirements.txt marks it as such, so it is not installed here.
+          uv pip install --python .venv/bin/python \
+            customtkinter==5.2.2 Pillow==12.2.0 pyinstaller==6.11.1
+
+      - name: Verify the interpreter carries the Tk the app needs
+        run: |
+          # A guard, not a diagnostic: if this ever drops back to 8.6 the tray
+          # disappears from the shipped app without any test failing.
+          .venv/bin/python - <<'PY'
+          import sys, tkinter
+          root = tkinter.Tk(); root.withdraw()
+          patch = root.tk.call("info", "patchlevel")
+          has_systray = bool(root.tk.call("info", "commands", "::tk::systray"))
+          print("Tk", patch, "| systray:", has_systray)
+          if int(patch.split(".")[0]) < 9 or not has_systray:
+              sys.exit("Tk %s has no systray; the menu-bar item would be missing" % patch)
+          PY
 
       - name: Verify the macOS engine imports and the core logic holds
-        run: python tools/selftest_macos.py
+        run: .venv/bin/python tools/selftest_macos.py
 
       - name: Build the icon
         run: |
@@ -65,7 +85,7 @@ jobs:
           iconutil -c icns icon.iconset -o icon.icns
 
       - name: Build the app
-        run: python -m PyInstaller HenkerDPI-macos.spec --clean -y
+        run: .venv/bin/python -m PyInstaller HenkerDPI-macos.spec --clean -y
 
       - name: Sign
         run: |

@@ -300,6 +300,13 @@ def _default_settings():
         # Ask GitHub once a day whether a newer release exists. Set False to
         # stop the app making any outbound request of its own.
         "update_check_enabled": True,
+        # Should the login item turn the bypass on, or only open the app?
+        # macOS only, and OFF by default on purpose: switching the bypass on
+        # needs an administrator prompt, and one that appears by itself at
+        # every login — before the user has done anything — is worse than one
+        # click. Windows has no such choice to make; its scheduled task runs
+        # elevated and silently, so it always starts the engine.
+        "autostart_engine": False,
     }
 
 

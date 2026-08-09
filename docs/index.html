@@ -45,16 +45,25 @@
     box-shadow:0 8px 26px rgba(77,139,255,.32);transition:transform .12s,background .12s;
   }
   .dl:hover{background:#3f7cf0;transform:translateY(-2px)}
-  .dlrow{display:flex;gap:13px;justify-content:center;flex-wrap:wrap}
   .dl .os{font-size:17px;opacity:.9}
-  /* The platform you are not on stays available but stops competing for the
-     click -- the visitor should not have to read two buttons to find theirs. */
-  .dl.secondary{
-    background:transparent;color:var(--fg2);
-    border:1px solid var(--border);box-shadow:none;font-weight:600;
-  }
-  .dl.secondary:hover{background:#191b1f;color:var(--fg);border-color:#333640}
   .meta{color:var(--fg3);font-size:13.5px;margin-top:13px}
+
+  /* One platform at a time. Showing both downloads and both sets of install
+     steps at once is what made this page hard to read: the visitor had to work
+     out which half was theirs before they could follow anything. */
+  .tabs{
+    display:inline-flex;gap:4px;margin:0 0 20px;padding:4px;
+    background:var(--card);border:1px solid var(--border);border-radius:12px;
+  }
+  .tab{
+    background:transparent;border:0;color:var(--fg3);border-radius:9px;
+    font:inherit;font-size:15px;font-weight:600;padding:9px 20px;
+    cursor:pointer;transition:background .12s,color .12s;
+  }
+  .tab:hover{color:var(--fg2)}
+  .tab[aria-selected="true"]{background:var(--accent);color:#fff}
+  .tab .os{margin-right:7px;opacity:.9}
+  .pane[hidden]{display:none}
 
   .points{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:46px}
   .pt{
@@ -105,13 +114,22 @@
          be taken off this account once; a link that fetches the binary itself
          is that same pattern, so it must not come back. Visitors pick their
          file from the assets list on the release page. -->
-    <div class="dlrow">
-      <a class="dl" id="dl-win" href="https://github.com/Henkerr/HenkerDPI/releases/latest">
+    <div class="tabs" role="tablist" aria-label="Platform">
+      <button class="tab" type="button" role="tab" data-os="win"
+              aria-controls="dl-win help-win"><span class="os">⊞</span>Windows</button>
+      <button class="tab" type="button" role="tab" data-os="mac"
+              aria-controls="dl-mac help-mac"><span class="os">⌘</span>macOS</button>
+    </div>
+
+    <div class="pane" id="dl-win" data-os="win">
+      <a class="dl" href="https://github.com/Henkerr/HenkerDPI/releases/latest">
         <span class="os">⊞</span>&nbsp;<span data-t="dl_win"></span>
       </a>
-      <a class="dl" id="dl-mac" href="https://github.com/Henkerr/HenkerDPI/releases/latest">
-        <!-- U+2318, not the Apple logo at U+F8FF: that glyph exists only in
-             Apple's own fonts and renders as a blank box everywhere else. -->
+    </div>
+    <div class="pane" id="dl-mac" data-os="mac">
+      <!-- U+2318, not the Apple logo at U+F8FF: that glyph exists only in
+           Apple's own fonts and renders as a blank box everywhere else. -->
+      <a class="dl" href="https://github.com/Henkerr/HenkerDPI/releases/latest">
         <span class="os">⌘</span>&nbsp;<span data-t="dl_mac"></span>
       </a>
     </div>
@@ -124,30 +142,34 @@
     <div class="pt"><b data-t="p3h"></b><span data-t="p3b"></span></div>
   </div>
 
-  <section>
-    <h2 data-t="installh"></h2>
-    <ol>
-      <li data-t="s1"></li>
-      <li data-t="s2"></li>
-      <li data-t="s3"></li>
-    </ol>
-  </section>
+  <div class="pane" id="help-win" data-os="win">
+    <section>
+      <h2 data-t="installh"></h2>
+      <ol>
+        <li data-t="s1"></li>
+        <li data-t="s2"></li>
+        <li data-t="s3"></li>
+      </ol>
+    </section>
 
-  <section class="warn">
-    <h2 data-t="warnh"></h2>
-    <span data-t="warn"></span>
-  </section>
+    <section class="warn">
+      <h2 data-t="warnh"></h2>
+      <span data-t="warn"></span>
+    </section>
+  </div>
 
-  <section>
-    <h2 data-t="mach"></h2>
-    <p data-t="macb"></p>
-    <ol>
-      <li data-t="m1"></li>
-      <li data-t="m2"></li>
-      <li data-t="m3"></li>
-    </ol>
-    <p class="meta" data-t="maccover"></p>
-  </section>
+  <div class="pane" id="help-mac" data-os="mac">
+    <section>
+      <h2 data-t="mach"></h2>
+      <p data-t="macb"></p>
+      <ol>
+        <li data-t="m1"></li>
+        <li data-t="m2"></li>
+        <li data-t="m3"></li>
+      </ol>
+      <p class="meta" data-t="maccover"></p>
+    </section>
+  </div>
 
   <!-- The installer link is deliberately absent. Defender's ML heuristic flags
        the Inno Setup build (Wacatac.B!ml, a false positive on an unsigned
@@ -406,16 +428,27 @@ function apply(code){
   sel.value = code;
 }
 
-// Lead with the button for the machine the visitor is actually on. The other
-// stays clickable -- someone may be downloading for a different computer.
-function highlightPlatform(){
+// One platform at a time, preselected to the machine the visitor is on. The
+// other is one click away rather than hidden -- people do download for a
+// different computer -- and the choice is remembered so they do not have to
+// make it again on the next visit.
+function selectOS(os){
+  document.querySelectorAll(".tab").forEach(tab => {
+    tab.setAttribute("aria-selected", String(tab.dataset.os === os));
+  });
+  document.querySelectorAll(".pane").forEach(pane => {
+    pane.hidden = pane.dataset.os !== os;
+  });
+  try { localStorage.setItem("hdpi_os", os); } catch (e) { /* private mode */ }
+}
+
+function defaultOS(){
+  try {
+    const saved = localStorage.getItem("hdpi_os");
+    if (saved === "win" || saved === "mac") return saved;
+  } catch (e) { /* private mode */ }
   const ua = navigator.userAgent;
-  const isMac = /Mac|iPhone|iPad/.test(ua) && !/Windows/.test(ua);
-  const win = document.getElementById("dl-win");
-  const mac = document.getElementById("dl-mac");
-  (isMac ? win : mac).classList.add("secondary");
-  const row = document.querySelector(".dlrow");
-  if (isMac) row.insertBefore(mac, win);
+  return (/Mac|iPhone|iPad/.test(ua) && !/Windows/.test(ua)) ? "mac" : "win";
 }
 
 function pick(){
@@ -433,8 +466,12 @@ sel.addEventListener("change", () => {
   apply(sel.value);
 });
 
+document.querySelectorAll(".tab").forEach(tab => {
+  tab.addEventListener("click", () => selectOS(tab.dataset.os));
+});
+
 apply(pick());
-highlightPlatform();
+selectOS(defaultOS());
 </script>
 </body>
 </html>
