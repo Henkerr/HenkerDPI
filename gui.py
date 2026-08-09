@@ -311,6 +311,7 @@ class HenkerDPIApp(ctk.CTk):
         self._update_retried = False
 
         self._build_ui()
+        self._bind_touchpad_scroll()
         self._poll_log_queue()
         self._check_autostart()
         self._highlight_active_theme()
@@ -783,6 +784,74 @@ class HenkerDPIApp(ctk.CTk):
                 progress_color=th["accent"], button_color=th["fg3"],
                 button_hover_color=th["fg2"])
             self._auto_engine_switch.pack(side="left")
+
+    def _bind_touchpad_scroll(self):
+        """Make two-finger scrolling work on a Mac trackpad.
+
+        Tk 9 reports trackpad gestures as <TouchpadScroll>, a separate event
+        carrying precise pixel deltas, and no longer as the <MouseWheel> a mouse
+        produces. customtkinter 5.2.2 predates Tk 9 and binds only <MouseWheel>,
+        so on the Tk the macOS build now ships, two-finger scrolling did nothing
+        at all and the scrollbar had to be dragged by hand.
+
+        The unpacking is Tk's own: tk::PreciseScrollDeltas turns the packed %D
+        into (dx, dy) and tk::ScaleNum adjusts for display scaling — the same
+        two calls Tk's Text and Listbox bindings use.
+        """
+        if not IS_MAC:
+            return
+        canvas = getattr(self._scroll, "_parent_canvas", None)
+        if canvas is None:
+            return
+
+        def on_touchpad(event):
+            widget = event.widget
+            # A Text has its own TouchpadScroll class binding and scrolls
+            # itself; letting this run too would drag the page behind the log at
+            # the same time.
+            try:
+                if widget.winfo_class() == "Text":
+                    return
+            except (AttributeError, tk.TclError):
+                pass
+            # Same containment test customtkinter applies to the wheel, so a
+            # gesture outside the scrollable area is ignored.
+            check = getattr(self._scroll, "check_if_master_is_canvas", None)
+            if check is not None and not check(widget):
+                return
+            try:
+                _dx, dy = self.tk.call("tk::PreciseScrollDeltas", event.delta)
+                dy = int(self.tk.call("tk::ScaleNum", int(dy)))
+            except (tk.TclError, ValueError, TypeError):
+                return
+            if dy:
+                self._scroll_canvas_pixels(canvas, -dy)
+
+        self.bind_all("<TouchpadScroll>", on_touchpad, add="+")
+
+    @staticmethod
+    def _scroll_canvas_pixels(canvas, pixels: int):
+        """Move a canvas view by a pixel amount.
+
+        A canvas has no "pixels" scroll unit — yview scroll takes only "units"
+        or "pages", and a unit is a tenth of the widget unless
+        -yscrollincrement is set. Setting that to 1 would make this exact but
+        would also reduce a mouse wheel notch to a single pixel, so the view
+        fraction is moved directly instead. (Tk's own Text binding does use
+        "pixels"; a Text supports it and a canvas does not, which is what made
+        the first attempt at this silently do nothing.)
+        """
+        try:
+            region = canvas.cget("scrollregion")
+            if not region:
+                return
+            parts = str(region).split()
+            span = float(parts[3]) - float(parts[1])
+            if span <= 0:
+                return
+            canvas.yview_moveto(canvas.yview()[0] + pixels / span)
+        except (tk.TclError, ValueError, IndexError, ZeroDivisionError):
+            return
 
     def _toggle_settings(self):
         """Show/hide the advanced settings panel. Default view stays clean."""
