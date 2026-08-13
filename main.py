@@ -55,6 +55,10 @@ class BypassEngine:
         self._retune = threading.Event()
         self._net_sig = None
         self._pending_measure = False
+        # Set by the network watcher on a real change/recovery. Tells the next
+        # _apply_strategy to re-pin DNS to the now-active adapter AND force a
+        # fresh measurement instead of trusting the per-network cache.
+        self._force_remeasure = False
         self._refresh_match_cache()
         self.stats = {"bypassed": 0, "passed": 0}
         self.running = False
@@ -283,13 +287,27 @@ class BypassEngine:
             self.running = False
             self._log(f"{t('engine_stopped')} | Bypass: {self.stats['bypassed']}")
 
-    def _apply_strategy(self, force: bool = False):
+    def _apply_strategy(self):
         """Pick the desync pair for the network we are on (measuring if needed).
 
-        A network change does NOT force a re-measure: the cache is keyed by
-        network, so moving between two known networks (home line <-> phone
-        hotspot) switches back instantly with no probing at all.
+        On the first start the cache is keyed by network, so a known line
+        restores its measured pair instantly with no probing. On a real network
+        change the watcher sets _force_remeasure, and we then (a) re-pin secure
+        DNS to the now-active adapter and (b) force a fresh measurement instead
+        of trusting the cache — a wired<->hotspot move lands on a path whose DPI,
+        NAT checksum behaviour AND DNS interception all differ, so the strategy
+        and the DNS pin both have to be redone. The macOS engine already forces
+        the re-measure on retune; Windows now matches it.
         """
+        force = self._force_remeasure
+        self._force_remeasure = False
+        # Consume the retune that brought us here BEFORE measuring. If the
+        # network changes again mid-measurement the watcher re-arms both flags,
+        # so the divert loop re-enters and re-measures instead of running the
+        # strategy we just picked for the network we already left.
+        self._retune.clear()
+        if force:
+            self._reapply_dns()
         try:
             decoy, split, source = autotune.resolve_strategy(
                 self._settings, self._log, force=force)
@@ -302,12 +320,37 @@ class BypassEngine:
             if source != "onbellek":
                 self._log(f"[*] Strateji: {self._decoy_mode}/{self._split_mode}")
         except Exception as e:
-            # A failed measurement must never stop the engine — fall back to the
-            # pair that has the widest confirmed track record.
-            self._tuned = ("badsum", "record")
+            # A failed measurement must never stop the engine — fall back to a
+            # NAT-safe pair. NOT badsum: on iPhone/carrier NAT the bad checksum
+            # is repaired, the decoy then reaches the server as valid and breaks
+            # every HTTPS site. badseq's decoy sits outside the receive window,
+            # so the server always drops it and no handshake is poisoned.
+            self._tuned = ("badseq", "record")
             self._refresh_match_cache()
             self._log(f"[!] Otomatik strateji secimi basarisiz ({e}) — varsayilan")
-        self._retune.clear()
+
+    def _reapply_dns(self):
+        """Re-pin secure DNS to the adapter that is now the default route.
+
+        DohManager pins the interfaces it finds when it STARTS; after a
+        wired->hotspot switch the new adapter is still on the carrier resolver
+        (which on a blocking ISP hijacks the very domains we are bypassing) until
+        we redo the setup. stop() restores the old adapter from the journal and
+        is idempotent, so at worst this is a no-op — never worse than leaving the
+        stale pin on a now-dead adapter.
+        """
+        if not self._settings.get("doh_enabled", True):
+            return
+        try:
+            if self._doh and self._doh.active:
+                self._doh.stop()
+            provider = self._settings.get("doh_provider", "cloudflare")
+            self._doh = DohManager(
+                provider=provider, log_callback=self._log,
+                system_doh=self._settings.get("system_doh_enabled", True))
+            self._doh.start()
+        except Exception as e:
+            self._log(f"[!] DNS yeniden uygulanamadi ({e})")
 
     def _net_watch(self):
         """Notice a network change and force a re-measure.
@@ -329,10 +372,14 @@ class BypassEngine:
                 continue
             if changed:
                 self._net_sig = sig
-                self._log("[*] Ag degisti — strateji yeniden olculuyor")
+                self._log("[*] Ag degisti — DNS ve strateji yeniden uygulaniyor")
             else:
                 self._pending_measure = False
                 self._log("[*] Baglanti geldi — strateji olculuyor")
+            # Re-pin DNS to the new adapter and re-measure from scratch, not from
+            # the cache: the pair that is right on the line we just left can be
+            # exactly the one that breaks this one.
+            self._force_remeasure = True
             self._retune.set()
             handle = self._main_handle
             if handle is not None:

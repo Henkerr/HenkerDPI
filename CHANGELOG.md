@@ -27,6 +27,36 @@ macOS is supported again, as a real build rather than an experiment.
   mechanism per network service, for the case the app never got to undo its own change.
 
 ### Fixed
+- **Windows: a wired→phone-hotspot switch stopped bypassing blocked sites, and restarting did not
+  reliably fix it.** Four separate gaps, all worse on mobile, broke the "measures every line and
+  self-configures" promise:
+  - **The measurement counted a TLS alert as a working handshake, so it selected the very strategy
+    that breaks the line.** `tls_reachable` treated a first response byte of `0x16` (ServerHello)
+    *or* `0x15` (a TLS **alert**) as "opened". On an iPhone-USB line the NAT repairs the `badsum`
+    decoy, the server then rejects the poisoned handshake with an alert — and the probe read that
+    `0x15` as success. So `badsum`/`record` looked like it opened Discord *and* passed the
+    google/cloudflare control check, was cached as a winner (`ok:true`), and then corrupted every
+    IPv4 handshake in production. Only sites reachable over IPv6 (which the IPv4-only engine never
+    touches) kept working, which is exactly why it looked like "just the blocked sites broke". A
+    real ServerHello (`0x16`) is now the only success, so a handshake-poisoning strategy can neither
+    be selected nor pass the control check. This was the root cause on the line measured live.
+  - **Secure DNS was pinned only to the adapter present at engine start.** When the active network
+    changed, only the desync strategy was re-measured; the new adapter kept the carrier's resolver,
+    which on a blocking ISP hijacks the very domains being bypassed — so blocked sites stayed
+    blocked while everything else worked. DNS is now re-pinned to the now-active adapter on a
+    network change (the old adapter is restored from the journal first).
+  - **A network change did not force a re-measurement.** The per-network cache was read with
+    `force=False`, so a moved-to line was served a stale entry rather than measured (macOS already
+    forced it; Windows now matches). A false "no block detected" is also no longer pinned for seven
+    days — it keeps a short TTL, so a line mis-measured once (e.g. because DNS interception or mobile
+    latency fooled the probe) re-measures on the next start or network change instead of being stuck
+    doing nothing for a week.
+  - **The unmeasurable-line fallback was the one pair that breaks over tethering.** When a
+    measurement could not run (offline, or no candidate beat the block), the engine fell back to
+    `badsum`/`record`. On an iPhone/carrier NAT the bad checksum is repaired in transit, the decoy
+    then reaches the server as a valid ClientHello, and *every* HTTPS site breaks. The fallback is
+    now the NAT-safe `badseq`/`record`: its decoy sits outside the receive window, so the server
+    always drops it and no handshake is ever poisoned.
 - **Re-applying the proxy overwrote the record of the user's original settings.** Switching mode or
   toggling a category re-applies while the engine is running, and the snapshot taken at that moment
   reads back HenkerDPI's own PAC. It was then written down as what to restore to, so quitting

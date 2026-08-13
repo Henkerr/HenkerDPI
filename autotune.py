@@ -43,6 +43,15 @@ CANDIDATES = (
     ("off", "record+sni"),
 )
 
+# Olcum hic calisamadiginda kullanilacak yedek (offline, ya da engel var ama
+# hicbir aday asamadi). CANDIDATES[0] (badsum) DEGIL: NAT/tethering yolunda
+# bozuk saglama ONARILIP sahte paket sunucuya gecerli olarak varir ve engelli
+# olmayan siteleri de bozar — mobilde "her HTTPS gitti" tablosunun sebebi budur.
+# badseq'in decoy'u pencere disinda kaldigi icin sunucu onu HER ZAMAN atar (NAT
+# onaramaz), yani hicbir handshake'i zehirlemez; mobil hatta record kesme tek
+# basina gecer, sabit hatta ise en fazla "aciyamadi" ile ayni sonucu verir.
+SAFE_FALLBACK = ("badseq", "record")
+
 # Ilki engelli bulunana kadar sirayla denenir; engelli bulunan hedef, adaylarin
 # uzerinde olculdugu hedef olur. Hicbiri engelli degilse hatta DPI engeli yok
 # demektir ve olcut "normal siteleri bozmamak"a doner.
@@ -294,10 +303,18 @@ def _client_hello(host: str, size: int = 1700) -> bytes:
 
 
 def tls_reachable(ip: str, host: str, timeout: float = PROBE_TIMEOUT) -> bool:
-    """Bu SNI ile bu IP'ye TLS anlasmasi baslatilabiliyor mu?
+    """Bu SNI ile bu IP'ye GERCEK bir TLS anlasmasi yurutulebiliyor mu?
 
-    True: sunucudan TLS kaydi geldi (anlasma ya da alert) — engel yok.
-    False: RST, zaman asimi ya da bos cevap — DPI kesti.
+    True: sunucu ServerHello (0x16 handshake kaydi) dondurdu — anlasma yuruyor.
+    False: RST, zaman asimi, bos cevap VEYA TLS alarmi (0x15).
+
+    Alarmi ('0x15') basari SAYMIYORUZ, cunku alarm paketin sunucuya ulastigini
+    ama anlasmanin BOZULDUGUNU gosterir — tipik ornek: NAT/tethering'in onardigi
+    badsum decoy'u gercek ClientHello'yu zehirler, sunucu handshake_failure alarmi
+    doner. Alarmi 'acildi' saymak, tam da bu hatta olan seydi: her IPv4 handshake'ini
+    kiran badsum/record hem hedefte hem kontrolde 'gecti' gorunup kazanan secildi.
+    Yalnizca gercek ServerHello basaridir; boylece zehirleyen strateji ne kazanan
+    olarak secilebilir ne de kontrolu gecebilir.
     """
     s = None
     try:
@@ -305,7 +322,7 @@ def tls_reachable(ip: str, host: str, timeout: float = PROBE_TIMEOUT) -> bool:
         s.settimeout(timeout)
         s.sendall(_client_hello(host))
         data = s.recv(16)
-        return len(data) >= 3 and data[0] in (0x16, 0x15)
+        return len(data) >= 3 and data[0] == 0x16
     except Exception:
         return False
     finally:
@@ -403,7 +420,7 @@ def choose(log=print, deadline: float = None):
     #    olcme: her sorgu zaman asimina ugrar, motor gec baslar ve sonuc da
     #    yanlis olur. "offline" kaydedilmez, ag gelince yeniden olculur.
     if not online():
-        return default[0], default[1], "offline", None
+        return SAFE_FALLBACK[0], SAFE_FALLBACK[1], "offline", None
 
     # 1) Engelli bir hedef bul. Motor kapali haldeyken acilmayan ilk hedef,
     #    adaylarin uzerinde olculecegi hedeftir.
@@ -450,7 +467,7 @@ def choose(log=print, deadline: float = None):
             continue
         return decoy, split, "olculdu", target
 
-    return default[0], default[1], "asilamadi", target
+    return SAFE_FALLBACK[0], SAFE_FALLBACK[1], "asilamadi", target
 
 
 def _controls_ok(decoy: str, split: str, deadline: float) -> bool:
@@ -507,8 +524,14 @@ def resolve_strategy(settings: dict, log=print, force: bool = False):
 
     # Imzasi cikarilamayan ag (varsayilan rota yok) onbellege anahtar olamaz;
     # yanlis agin sonucunu baska aga uygulamaktansa her seferinde olcmek dogru.
+    #
+    # Yalnizca gercek bir kazanan ("olculdu") 7 gun pinlenir. "engel-yok" dusuk
+    # guvenli bir sonuctur — engel tespiti yanilabilir (ornegin DNS kacirmasi ya
+    # da mobil gecikme yuzunden), ve o durumda hic-asma-yapmayan strateji bir
+    # haftaligina takilir. Kisa TTL (CACHE_TTL_FAILED) ile saklanir ki bir sonraki
+    # acilis / ag gelisinde yeniden olculsun.
     if sig != "unknown":
-        _remember(sig, decoy, split, status != "asilamadi", target or "")
+        _remember(sig, decoy, split, status == "olculdu", target or "")
 
     log("[*] Strateji secildi: %s / %s (%.1fs, %s)"
         % (decoy, split, time.time() - t0, status))
