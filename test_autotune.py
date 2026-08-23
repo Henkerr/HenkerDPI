@@ -76,6 +76,43 @@ check("NAT line fallback -> badseq/record",
       autotune._nat_safe_fallback(lambda *a: None) == autotune.SAFE_FALLBACK)
 autotune._controls_ok = _saved_ctrl
 
+# 4) VERSION SYNC — config.APP_VERSION is what updater.py compares against the
+#    latest GitHub release tag, but the version ALSO lives in version_info.txt
+#    (the Windows file resource) and setup.iss. Keeping them in sync by hand
+#    failed: the exe shipped as 2.7.3 while APP_VERSION still said 2.7.0, so the
+#    updater judged every release against a version the user was not running —
+#    it would offer an already-installed build as an "update". Check it here.
+import os
+import re
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _version_in(name, pattern):
+    try:
+        text = open(os.path.join(_HERE, name), encoding="utf-8",
+                    errors="replace").read()
+    except OSError:
+        return None
+    m = re.search(pattern, text)
+    return m.group(1) if m else None
+
+
+import config
+
+_app = tuple(int(x) for x in config.APP_VERSION.split(".")[:3])
+_res = _version_in("version_info.txt", r"'FileVersion',\s*'([0-9.]+)'")
+_iss = _version_in("setup.iss", r"AppVersion=([0-9.]+)")
+_res_t = tuple(int(x) for x in _res.split(".")[:3]) if _res else None
+_iss_t = tuple(int(x) for x in _iss.split(".")[:3]) if _iss else None
+
+check("config.APP_VERSION matches version_info.txt FileVersion",
+      _res_t is not None and _app == _res_t,
+      "APP_VERSION=%s version_info=%s" % (config.APP_VERSION, _res))
+check("config.APP_VERSION matches setup.iss AppVersion",
+      _iss_t is not None and _app == _iss_t,
+      "APP_VERSION=%s setup.iss=%s" % (config.APP_VERSION, _iss))
+
 print()
 print("ALL PASS" if not fails else "FAILED: " + ", ".join(fails))
 sys.exit(1 if fails else 0)
