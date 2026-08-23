@@ -20,11 +20,16 @@
     const DOMAINS = ["discord.com", "gateway.discord.gg", "cdn.discordapp.com", "media.discordapp.net",
       "youtube.com", "i.ytimg.com", "googlevideo.com", "x.com", "twimg.com", "instagram.com",
       "cdninstagram.com", "whatsapp.net", "open.spotify.com", "reddit.com"];
+    // Server IPs for mock "engel" (QUIC refused) events — the real engine logs
+    // the destination address of each refused QUIC Initial.
+    const IPS = ["162.159.135.234", "142.250.187.14", "31.13.72.36", "104.16.248.249", "35.186.224.25"];
     const stamp = () => { const d = new Date(), p = n => String(n).padStart(2, "0"); return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()); };
     const tick = () => {
       s.bypassed += 3 + Math.floor(Math.random() * 11);
-      events.push({ t: stamp(), host: DOMAINS[Math.floor(Math.random() * DOMAINS.length)], act: Math.random() < 0.85 ? "bypass" : "pass" });
-      if (events.length > 60) events.shift();
+      const r = Math.random();
+      if (r < 0.28) events.push({ t: stamp(), host: IPS[Math.floor(Math.random() * IPS.length)], act: "block" });
+      else events.push({ t: stamp(), host: DOMAINS[Math.floor(Math.random() * DOMAINS.length)], act: r < 0.92 ? "bypass" : "pass" });
+      if (events.length > 80) events.shift();
       save();
     };
     if (s.running) timer = setInterval(tick, 850);

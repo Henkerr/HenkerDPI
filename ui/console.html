@@ -10,7 +10,11 @@ figure{width:392px;margin:0}
 figure figcaption{display:none}
 .win.off .dot{background:#4e7a68;box-shadow:none}
 #conSub{white-space:nowrap}
-.stream{animation:none!important}
+.stream{animation:none!important;transition:transform .5s ease-out;will-change:transform}
+#conSearch{display:none;flex:1;min-width:64px;font:inherit;font-size:10.5px;padding:5px 9px;border-radius:6px;background:#0b1712;border:1px solid #17322a;color:#7FA39C;outline:none}
+#conSearch::placeholder{color:#3f655b}
+.filters.searching span[data-f]{display:none}
+.filters.searching #conSearch{display:block}
 .con-ov{position:fixed;inset:0;z-index:60;background:rgba(2,6,5,.62);display:none;place-items:center;padding:12px}
 .con-ov.open{display:grid}
 </style>
@@ -20,7 +24,7 @@ figure figcaption{display:none}
       <div class="ctrl"><div class="stat"><span class="dot"></span><div><div class="s1" id="conStatus">KORUMA AKTİF</div><div class="s2" id="conSub">DPI bypass çalışıyor · 12:30</div></div></div>
         <button class="pw stop" id="conStop"><span class="ic"></span>DURDUR</button></div>
       <div class="tools"><div style="display:flex;align-items:center"><span class="lab">Mod</span><div class="seg" id="conSeg"><span class="on">Tümü</span><span>Seçili</span></div></div>
-        <div class="filters"><span class="fon">Hepsi</span><span>Bypass</span><span>Engel</span><span class="srch"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5l-4-4"/></svg></span></div></div>
+        <div class="filters" id="conFilters"><span class="fon" data-f="all">Hepsi</span><span data-f="bypass">Bypass</span><span data-f="block">Engel</span><input id="conSearch" type="text" placeholder="alan adı ara…" spellcheck="false" autocomplete="off"><span class="srch" id="conSrch"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5l-4-4"/></svg></span></div></div>
       <div class="log"><div class="stream" id="conLog"><div class="ln"><span class="t">14:02:31</span><span class="ok">bypass</span> discord.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:31</span><span class="ok">bypass</span> gateway.discord.gg<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:30</span><span class="rf">refuse</span> quic → tcp<span class="mk">↺</span></div><div class="ln"><span class="t">14:02:30</span><span class="ok">bypass</span> cdn.discordapp.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:29</span><span class="ok">bypass</span> x.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:29</span><span class="ok">bypass</span> instagram.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:28</span><span class="ok">bypass</span> media.discordapp.net<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:28</span><span class="rf">refuse</span> quic → tcp<span class="mk">↺</span></div><div class="ln"><span class="t">14:02:27</span><span class="ok">bypass</span> youtube.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:27</span><span class="ok">bypass</span> twimg.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:31</span><span class="ok">bypass</span> discord.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:31</span><span class="ok">bypass</span> gateway.discord.gg<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:30</span><span class="rf">refuse</span> quic → tcp<span class="mk">↺</span></div><div class="ln"><span class="t">14:02:30</span><span class="ok">bypass</span> cdn.discordapp.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:29</span><span class="ok">bypass</span> x.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:29</span><span class="ok">bypass</span> instagram.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:28</span><span class="ok">bypass</span> media.discordapp.net<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:28</span><span class="rf">refuse</span> quic → tcp<span class="mk">↺</span></div><div class="ln"><span class="t">14:02:27</span><span class="ok">bypass</span> youtube.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:27</span><span class="ok">bypass</span> twimg.com<span class="mk">✓</span></div></div></div>
       <div class="foot"><span><b id="conFBypass">1284</b> bypass</span><span><b id="conFSure">12:30</b> süre</span><span>dns <b id="conFDns">1.1.1.1</b></span><span>mod <b id="conFMod">TÜMÜ</b></span></div>
       <div class="gin"></div></div>
@@ -77,21 +81,84 @@ $("conGear").addEventListener("click", ()=>$("conSettings").classList.add("open"
 $("conBack").addEventListener("click", ()=>$("conSettings").classList.remove("open"));
 $("conSettings").addEventListener("click", e=>{ if(e.target.id==="conSettings") e.target.classList.remove("open"); });
 
-// ---- live log: REAL domains from the engine (SNI), newest first ----
+// ---- live log: REAL events from the engine (SNI bypass/pass + QUIC engel) ----
 function esc(x){ return String(x).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+var _logFilter="all";                // all | bypass | block(engel)
+var _logSearch="";                   // host substring filter (search box)
+var _prevLog=null;                   // the list rendered on the previous tick
+function _logKey(e){ return e.t+"|"+e.host+"|"+e.act; }
+// How many fresh entries lead the new list vs the previous one. Both are
+// newest-first, so new events sit at the front and the old head slides down;
+// we find where the previous head re-appears (a 5-deep match to survive
+// duplicate lines). Fully churned -> cap the slide.
+function _newLead(a,b){
+  if(!b||!b.length) return 0;
+  var W=Math.min(5,b.length);
+  for(var k=0;k+W<=a.length;k++){
+    var hit=true;
+    for(var j=0;j<W;j++){ if(_logKey(a[k+j])!==_logKey(b[j])){ hit=false; break; } }
+    if(hit) return k;
+  }
+  return Math.min(a.length,12);
+}
 function renderLog(list){
   const el=$("conLog"); if(!el) return;
-  if(!list||!list.length){ el.innerHTML='<div class="ln" style="opacity:.45">· trafik bekleniyor ·</div>'; return; }
+  const box=el.parentElement;        // .log — fixed height, clips overflow
+  if(!list||!list.length){ el.style.transition="none"; el.style.transform="translateY(0)"; el.innerHTML='<div class="ln" style="opacity:.45">'+((_logFilter!=="all"||_logSearch)?"· eşleşme yok ·":"· trafik bekleniyor ·")+'</div>'; _prevLog=null; return; }
+  const lead=_newLead(list,_prevLog);
   el.innerHTML = list.map(function(e){
-    var cls = e.act==="bypass"?"ok":(e.act==="refuse"?"rf":"");
-    var mk  = e.act==="bypass"?"✓":(e.act==="refuse"?"↺":"·");
-    var lab = e.act==="bypass"?"bypass":(e.act==="refuse"?"refuse":"pass");
-    return '<div class="ln"><span class="t">'+e.t+'</span><span class="'+cls+'">'+lab+'</span> '+esc(e.host)+'<span class="mk">'+mk+'</span></div>';
+    var blk = e.act==="block"||e.act==="refuse";   // QUIC refused → forced to TCP
+    var cls = e.act==="bypass"?"ok":(blk?"rf":"");
+    var mk  = e.act==="bypass"?"✓":(blk?"↺":"·");
+    var lab = e.act==="bypass"?"bypass":(blk?"engel":"pass");
+    var host = blk ? "quic → "+esc(e.host) : esc(e.host);
+    return '<div class="ln"><span class="t">'+e.t+'</span><span class="'+cls+'">'+lab+'</span> '+host+'<span class="mk">'+mk+'</span></div>';
   }).join("");
+  // Downward flow: fresh lines land at the TOP and push the list down. Animate
+  // that push only once the log overflows the box (enough lines to scroll) AND
+  // real new lines arrived — start the stream shifted up by their height, then
+  // glide back to rest so the feed visibly flows downward. This keeps flowing
+  // even after the buffer fills (height stops growing but new lines still land).
+  const over=el.scrollHeight-box.clientHeight;
+  const lineH=el.firstElementChild ? el.firstElementChild.offsetHeight : 22;
+  const add=Math.min(lead*lineH, box.clientHeight);
+  if(over>0 && add>0 && _prevLog){
+    el.style.transition="none"; el.style.transform="translateY(-"+add+"px)";
+    void el.offsetHeight;            // commit the start state before animating
+    requestAnimationFrame(function(){ el.style.transition="transform .5s ease-out"; el.style.transform="translateY(0)"; });
+  }else{
+    el.style.transition="none"; el.style.transform="translateY(0)";
+  }
+  _prevLog=list;
 }
-async function tickLog(){ if(document.hidden) return; try{ renderLog(await HDPI.getLog(20)); }catch(e){} }
+function applyLogFilter(list){
+  var q=_logSearch.trim().toLowerCase();
+  return (list||[]).filter(function(e){
+    if(q) return String(e.host).toLowerCase().indexOf(q)>=0;   // search overrides the chip
+    if(_logFilter==="bypass") return e.act==="bypass";
+    if(_logFilter==="block")  return e.act==="block"||e.act==="refuse";
+    return true;                                                // "all"
+  }).slice(0,40);
+}
+async function tickLog(){ if(document.hidden) return; try{ renderLog(applyLogFilter(await HDPI.getLog(60))); }catch(e){} }
 HDPI.whenReady(tickLog); setInterval(tickLog, 1000);
 document.addEventListener("visibilitychange", function(){ if(!document.hidden) tickLog(); });
+
+// filter chips (Hepsi / Bypass / Engel) + search box — re-render at once so the
+// switch feels instant; _prevLog=null snaps (no flow slide) on the switch.
+$("conFilters").addEventListener("click", function(ev){
+  var sp=ev.target.closest("span[data-f]"); if(!sp) return;
+  _logFilter=sp.dataset.f;
+  $("conFilters").querySelectorAll("span[data-f]").forEach(function(x){ x.classList.toggle("fon", x===sp); });
+  _prevLog=null; tickLog();
+});
+$("conSrch").addEventListener("click", function(){
+  var on=$("conFilters").classList.toggle("searching");
+  if(on){ $("conSearch").focus(); }
+  else { $("conSearch").value=""; _logSearch=""; _prevLog=null; tickLog(); }
+});
+$("conSearch").addEventListener("input", function(){ _logSearch=this.value; _prevLog=null; tickLog(); });
+$("conSearch").addEventListener("keydown", function(ev){ if(ev.key==="Escape") $("conSrch").click(); });
 
 </script>
 </body></html>
