@@ -65,7 +65,10 @@ if getattr(sys, "frozen", False):
     _APP_DIR = os.path.dirname(sys.executable)
 else:
     _APP_DIR = SCRIPT_DIR
-FONT = "Helvetica"
+# Native system UI font: Segoe UI on Windows (far cleaner than the Helvetica
+# alias, which falls back to Arial), Helvetica on macOS. One swap modernises
+# every label without touching a single widget.
+FONT = "Helvetica" if IS_MAC else "Segoe UI"
 
 GREEN = "#4ade80"
 RED = "#f87171"
@@ -140,6 +143,10 @@ THEME_FILE = resolve_pref("theme_pref.json")
 
 NUM_HOVER_FRAMES = 4
 HOVER_ANIM_MS = 60
+# Breathing-glow loop for the running power button: rendered once, looped on a
+# timer. A smooth 0->1->0 cosine cycle so the light swells and fades like breath.
+PULSE_FRAMES = 18
+PULSE_MS = 62
 
 
 def _load_theme():
@@ -191,29 +198,40 @@ def _make_power_button(size, active, hover=0.0, theme_key="phantom"):
     inner_dim_hover = tuple(min(c + 10, 255) for c in card_rgb)
 
     if active:
-        ring_col = _lerp_color((*ga, 255), (*[min(c + 25, 255) for c in ga], 255), hover)
-        glow_col = (*ga, int(_lerp(50, 70, hover)))
+        # Wider glow range so the running "breathing" pulse is clearly visible.
+        ring_col = _lerp_color((*ga, 255), (*[min(c + 30, 255) for c in ga], 255), hover)
+        glow_col = (*ga, int(_lerp(70, 165, hover)))
         icon_col = _lerp_color((*accent_rgb, 255), (*icon_bright, 255), hover)
         inner_col = (*inner_active, 255)
     else:
-        # Lift the OFF-state ring above the near-invisible border colour so the
-        # power button reads as a clear, tappable control even when idle.
-        base_ring = tuple(min(c + 48, 255) for c in border_rgb)
+        # OFF, but never dead: tint the ring and glyph toward the theme accent
+        # so an idle power button reads as a branded, tappable control rather
+        # than a flat grey circle, and keep a faint accent halo at rest.
+        base_ring = _lerp_color(
+            tuple(min(c + 40, 255) for c in border_rgb),
+            _hex_to_rgb(th["accent_dim"]), 0.45)
         ring_col = _lerp_color((*base_ring, 255), (*rh, 255), hover)
-        glow_col = (*gh, int(70 * hover))
-        icon_dim = tuple(min(c + 25, 255) for c in border_rgb)
-        icon_col = _lerp_color((*icon_dim, 210), (255, 255, 255, 255), hover)
+        glow_col = (*gh, int(_lerp(24, 82, hover)))
+        icon_base = _lerp_color(tuple(min(c + 22, 255) for c in border_rgb),
+                                accent_rgb, 0.30)
+        icon_col = _lerp_color((*icon_base, 225), (255, 255, 255, 255), hover)
         inner_col = _lerp_color((*inner_dim, 255), (*inner_dim_hover, 255), hover)
 
-    if active or hover > 0.01:
-        glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-        gd = ImageDraw.Draw(glow)
-        gr = int(s * 0.34)
-        gd.ellipse([cx - gr, cy - gr, cx + gr, cy + gr], fill=glow_col)
-        blur_r = max(1, int(s * 0.08))
-        glow = glow.filter(ImageFilter.GaussianBlur(radius=blur_r))
-        img = Image.alpha_composite(img, glow)
-        draw = ImageDraw.Draw(img)
+    # Hero glow: a big soft ambient bloom PLUS a tighter bright core, so the
+    # card fills with light rather than showing a thin ring. OFF at rest keeps a
+    # faint halo; the bloom swells with the pulse/hover for a living light.
+    glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    amb_r = int(s * (0.44 + 0.07 * hover))
+    amb_a = int(glow_col[3] * 0.5)
+    gd.ellipse([cx - amb_r, cy - amb_r, cx + amb_r, cy + amb_r],
+               fill=(glow_col[0], glow_col[1], glow_col[2], amb_a))
+    core_r = int(s * (0.32 + 0.06 * hover))
+    gd.ellipse([cx - core_r, cy - core_r, cx + core_r, cy + core_r], fill=glow_col)
+    blur_r = max(1, int(s * 0.10))
+    glow = glow.filter(ImageFilter.GaussianBlur(radius=blur_r))
+    img = Image.alpha_composite(img, glow)
+    draw = ImageDraw.Draw(img)
 
     rr = int(s * 0.40)
     rw = int(s * _lerp(0.020, 0.026, hover))
@@ -249,6 +267,17 @@ class HenkerDPIApp(ctk.CTk):
         self.minsize(400, 520)
         self.configure(fg_color=THEMES[self._theme]["bg"])
 
+        # Soft launch: start transparent and fade in. Skipped when the boot task
+        # sends us straight to the tray (nothing to fade), so the window is never
+        # left invisible when later reopened from the tray.
+        self._will_fade = ("--autostart" not in sys.argv
+                           and "--minimized" not in sys.argv)
+        if self._will_fade:
+            try:
+                self.attributes("-alpha", 0.0)
+            except Exception:
+                self._will_fade = False
+
         icon_path = os.path.join(SCRIPT_DIR, "icon.ico")
         self._icon_png = os.path.join(SCRIPT_DIR, "icon.png")
         if os.path.exists(icon_path):
@@ -263,6 +292,8 @@ class HenkerDPIApp(ctk.CTk):
 
         self._hover_frame = 0
         self._hover_anim_id = None
+        self._pulse_id = None
+        self._pulse_i = 0
         self._render_power_frames()
         self._theme_dots = []
         self._update_info = None
@@ -285,6 +316,24 @@ class HenkerDPIApp(ctk.CTk):
         # and go straight to the tray without showing the window.
         if "--autostart" in sys.argv or "--minimized" in sys.argv:
             self.after(400, self._enter_background)
+        else:
+            if self._will_fade:
+                self._fade_in_window()
+            # --run: keep the window on screen AND start the engine, so the
+            # bypass keeps protecting while the redesigned UI is visible.
+            if "--run" in sys.argv:
+                self.after(500, self._start)
+
+    def _fade_in_window(self, steps=10, ms=16):
+        """Ramp window opacity 0 -> 1 for a soft launch."""
+        def _step(i):
+            try:
+                self.attributes("-alpha", min(1.0, i / steps))
+            except Exception:
+                return
+            if i < steps:
+                self.after(ms, _step, i + 1)
+        _step(1)
 
     def _enter_background(self):
         """Boot autostart: start the bypass and drop to the system tray."""
@@ -298,41 +347,91 @@ class HenkerDPIApp(ctk.CTk):
         self.iconify()                   # fallback: minimise, stay reachable
 
     def _render_power_frames(self):
-        pil_off, pil_on = self._render_pil_frames()
-        self._apply_pil_frames(pil_off, pil_on)
+        self._apply_pil_frames(*self._render_pil_frames())
 
     def _render_pil_frames(self):
         pil_off = []
         pil_on = []
         for i in range(NUM_HOVER_FRAMES + 1):
             h = i / NUM_HOVER_FRAMES
-            pil_off.append(_make_power_button(164, False, h, self._theme))
-            pil_on.append(_make_power_button(164, True, h, self._theme))
-        return pil_off, pil_on
+            pil_off.append(_make_power_button(198, False, h, self._theme))
+            pil_on.append(_make_power_button(198, True, h, self._theme))
+        pil_pulse = []
+        for i in range(PULSE_FRAMES):
+            h = 0.5 - 0.5 * math.cos(2 * math.pi * i / PULSE_FRAMES)
+            pil_pulse.append(_make_power_button(198, True, h, self._theme))
+        return pil_off, pil_on, pil_pulse
 
-    def _apply_pil_frames(self, pil_off, pil_on):
+    def _apply_pil_frames(self, pil_off, pil_on, pil_pulse):
         self._frames_off = [ImageTk.PhotoImage(img) for img in pil_off]
         self._frames_on = [ImageTk.PhotoImage(img) for img in pil_on]
+        self._frames_pulse = [ImageTk.PhotoImage(img) for img in pil_pulse]
         self._img_off = self._frames_off[0]
         self._img_on = self._frames_on[0]
 
     def _render_power_frames_async(self):
         theme_key = self._theme
         def _worker():
-            pil_off, pil_on = self._render_pil_frames()
-            self.after(0, lambda: self._on_async_render_done(pil_off, pil_on, theme_key))
+            frames = self._render_pil_frames()
+            self.after(0, lambda: self._on_async_render_done(theme_key, *frames))
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _on_async_render_done(self, pil_off, pil_on, theme_key):
+    def _on_async_render_done(self, theme_key, pil_off, pil_on, pil_pulse):
         if self._theme != theme_key:
             return
-        self._apply_pil_frames(pil_off, pil_on)
+        self._apply_pil_frames(pil_off, pil_on, pil_pulse)
         if self._running:
-            self._hover_frame = NUM_HOVER_FRAMES
-            self._power_label.configure(image=self._frames_on[NUM_HOVER_FRAMES])
+            self._start_pulse()
         else:
+            self._stop_pulse()
             self._hover_frame = 0
             self._power_label.configure(image=self._frames_off[0])
+
+    # --- Breathing pulse (running state) ---
+    def _start_pulse(self):
+        self._stop_pulse()
+        self._pulse_i = 0
+        self._pulse_step()
+
+    def _pulse_step(self):
+        if not self._running or not getattr(self, "_frames_pulse", None):
+            return
+        self._power_label.configure(image=self._frames_pulse[self._pulse_i])
+        self._pulse_i = (self._pulse_i + 1) % len(self._frames_pulse)
+        self._pulse_id = self.after(PULSE_MS, self._pulse_step)
+
+    def _stop_pulse(self):
+        pid = getattr(self, "_pulse_id", None)
+        if pid:
+            try:
+                self.after_cancel(pid)
+            except Exception:
+                pass
+        self._pulse_id = None
+
+    def _fade_status_color(self, target_hex, text=None, steps=6, ms=28):
+        """Ease the status label from its current colour to target_hex, so the
+        on/off flip glides instead of snapping. Sets the text up front."""
+        if text is not None:
+            self._status_text.configure(text=text)
+        try:
+            cur = self._status_text.cget("text_color")
+            c0 = _hex_to_rgb(cur if isinstance(cur, str) else cur[-1])
+            c1 = _hex_to_rgb(target_hex)
+        except Exception:
+            self._status_text.configure(text_color=target_hex)
+            return
+        self._status_fade_seq = getattr(self, "_status_fade_seq", 0) + 1
+        seq = self._status_fade_seq
+
+        def _step(i):
+            if seq != self._status_fade_seq:
+                return
+            col = _lerp_color(c0, c1, i / steps)
+            self._status_text.configure(text_color="#%02x%02x%02x" % col)
+            if i < steps:
+                self.after(ms, _step, i + 1)
+        _step(1)
 
     def _build_ui(self):
         th = THEMES[self._theme]
@@ -347,10 +446,10 @@ class HenkerDPIApp(ctk.CTk):
         self._header.pack_propagate(False)
 
         self._henker_label = ctk.CTkLabel(self._header, text="HENKER",
-                     font=ctk.CTkFont(FONT, 14, "bold"), text_color=th["fg"])
+                     font=ctk.CTkFont(FONT, 17, "bold"), text_color=th["fg"])
         self._henker_label.pack(side="left", padx=(16, 0))
         self._dpi_label = ctk.CTkLabel(self._header, text="DPI",
-                     font=ctk.CTkFont(FONT, 14, "bold"), text_color=th["accent"])
+                     font=ctk.CTkFont(FONT, 17, "bold"), text_color=th["accent"])
         self._dpi_label.pack(side="left", padx=(2, 0))
 
         self._badge = ctk.CTkLabel(
@@ -368,6 +467,12 @@ class HenkerDPIApp(ctk.CTk):
             fg_color="transparent", hover_color=th["border"],
             text_color=th["fg2"], command=self._toggle_settings)
         self._gear_btn.pack(side="right", padx=(0, 12))
+
+        # Thin accent rule under the header — a touch of structure/depth so the
+        # top bar reads as a distinct surface rather than floating.
+        self._header_sep = ctk.CTkFrame(self._scroll, fg_color=th["accent_dim"],
+                                        height=2, corner_radius=0)
+        self._header_sep.pack(fill="x")
 
         # === Update banner (hidden until a newer release is found) ===
         self._update_bar = ctk.CTkFrame(self._scroll, fg_color=th["accent_dim"],
@@ -407,13 +512,13 @@ class HenkerDPIApp(ctk.CTk):
 
         self._status_text = ctk.CTkLabel(
             self._btn_card, text=t("status_off", self._lang),
-            font=ctk.CTkFont(FONT, 20, "bold"), text_color=th["fg2"])
-        self._status_text.pack(pady=(22, 0))
+            font=ctk.CTkFont(FONT, 24, "bold"), text_color=th["fg2"])
+        self._status_text.pack(pady=(24, 0))
 
         self._status_desc = ctk.CTkLabel(
             self._btn_card, text=t("desc_off", self._lang),
             font=ctk.CTkFont(FONT, 12), text_color=th["fg3"])
-        self._status_desc.pack(pady=(4, 0))
+        self._status_desc.pack(pady=(5, 0))
 
         self._power_label = tk.Label(self._btn_card, image=self._img_off,
                                       bg=th["card"], cursor="hand2",
@@ -527,7 +632,7 @@ class HenkerDPIApp(ctk.CTk):
             self._card_labels[key] = (title_lbl, title_key)
             self._stat_title_labels.append(title_lbl)
             lbl = ctk.CTkLabel(card, text="0" if key != "uptime" else "—",
-                               font=ctk.CTkFont(FONT, 20, "bold"), text_color=th["fg"])
+                               font=ctk.CTkFont(FONT, 24, "bold"), text_color=accent)
             lbl.pack(anchor="w", padx=10, pady=(0, 8))
             self._cards[key] = lbl
             self._stat_value_labels.append(lbl)
@@ -834,6 +939,7 @@ class HenkerDPIApp(ctk.CTk):
         self.configure(fg_color=th["bg"])
 
         self._header.configure(fg_color=th["card"])
+        self._header_sep.configure(fg_color=th["accent_dim"])
         self._henker_label.configure(text_color=th["fg"])
         self._dpi_label.configure(text_color=th["accent"])
 
@@ -890,8 +996,8 @@ class HenkerDPIApp(ctk.CTk):
             self._stat_bars[key].configure(fg_color=stat_colors[idx])
         for lbl in self._stat_title_labels:
             lbl.configure(text_color=th["fg3"])
-        for lbl in self._stat_value_labels:
-            lbl.configure(text_color=th["fg"])
+        for lbl, col in zip(self._stat_value_labels, stat_colors):
+            lbl.configure(text_color=col)
 
         # Custom domains
         self._domain_card.configure(fg_color=th["card"], border_color=th["border"])
@@ -988,9 +1094,11 @@ class HenkerDPIApp(ctk.CTk):
 
         self._running = True
         self._start_time = time.time()
+        self._bypass_shown = 0
+        self._cards["bypass"].configure(text="0")
         self._hover_frame = NUM_HOVER_FRAMES
-        self._power_label.configure(image=self._frames_on[NUM_HOVER_FRAMES])
-        self._status_text.configure(text=t("status_on", self._lang), text_color=GREEN)
+        self._start_pulse()
+        self._fade_status_color(GREEN, t("status_on", self._lang))
         self._status_desc.configure(text=t("desc_on", self._lang))
         th = THEMES[self._theme]
         self._badge.configure(text=t("badge_online", self._lang), text_color=GREEN,
@@ -1012,10 +1120,11 @@ class HenkerDPIApp(ctk.CTk):
         self._engine = None
         self._thread = None
         self._start_time = None
+        self._stop_pulse()
         self._hover_frame = 0
         self._power_label.configure(image=self._frames_off[0])
         th = THEMES[self._theme]
-        self._status_text.configure(text=t("status_off", self._lang), text_color=th["fg2"])
+        self._fade_status_color(th["fg2"], t("status_off", self._lang))
         self._status_desc.configure(text=t("desc_off", self._lang))
         self._badge.configure(text=t("badge_offline", self._lang), text_color=th["fg3"],
                                fg_color=th["border"])
@@ -1030,10 +1139,11 @@ class HenkerDPIApp(ctk.CTk):
         self._engine = None
         self._thread = None
         self._start_time = None
+        self._stop_pulse()
         self._hover_frame = 0
         self._power_label.configure(image=self._frames_off[0])
         th = THEMES[self._theme]
-        self._status_text.configure(text=t("status_off", self._lang), text_color=th["fg2"])
+        self._fade_status_color(th["fg2"], t("status_off", self._lang))
         self._status_desc.configure(text=t("desc_off", self._lang))
         self._badge.configure(text=t("badge_offline", self._lang), text_color=th["fg3"],
                                fg_color=th["border"])
@@ -1042,11 +1152,33 @@ class HenkerDPIApp(ctk.CTk):
 
     # === Stats ===
 
+    def _animate_bypass(self, target, steps=8, ms=22):
+        """Tween the bypass counter to its new value so it ticks up instead of
+        jumping — lively when a page fires dozens of handshakes at once."""
+        start = getattr(self, "_bypass_shown", 0)
+        if target == start:
+            return
+        self._bypass_anim_seq = getattr(self, "_bypass_anim_seq", 0) + 1
+        seq = self._bypass_anim_seq
+
+        def _step(i):
+            if seq != self._bypass_anim_seq:
+                return
+            if not self._running or i >= steps:
+                self._bypass_shown = target
+                self._cards["bypass"].configure(text=str(target))
+                return
+            val = int(start + (target - start) * (i / steps))
+            self._bypass_shown = val
+            self._cards["bypass"].configure(text=str(val))
+            self.after(ms, _step, i + 1)
+        _step(1)
+
     def _tick_stats(self):
         if not self._running or not self._engine:
             return
         s = self._engine.stats
-        self._cards["bypass"].configure(text=str(s["bypassed"]))
+        self._animate_bypass(s["bypassed"])
         if self._start_time:
             el = int(time.time() - self._start_time)
             m, sec = divmod(el, 60)
