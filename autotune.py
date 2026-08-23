@@ -263,8 +263,11 @@ def _client_hello(host: str, size: int = 1700) -> bytes:
     Python'un ssl modulunun urettigi hello kucuk kalir; DPI davranisi paket
     boyutuna ve SNI'nin kayit icindeki yerine gore degisebildigi icin olcumun
     gercek kullanimdan sapmamasi adina hello elle kurulur ve padding uzantisiyla
-    tarayici boyuna cikarilir. Sunucunun anlasmayi kabul etmesi gerekmez: bir
-    TLS cevabi (ServerHello ya da alert) donmesi hattin acik oldugunu kanitlar.
+    tarayici boyuna cikarilir. TLS 1.3 icin key_share ZORUNLU: onsuz her modern
+    sunucu hello'yu 'missing_extension' (alarm 109) ile reddeder, ASLA ServerHello
+    donmez — o zaman 0x16 olcutu her stratejide basarisiz olur ve tuner hep yedege
+    duser. key_share ile gercek bir ServerHello (0x16) doner, yani 0x16 = 'hello
+    sunucuya ulasti (DPI asildi)', 0x15/RST = 'asilamadi ya da zehirlendi'.
     """
     host_b = host.encode("ascii")
     sni = (struct.pack("!HH", 0x0000, len(host_b) + 5) +
@@ -280,7 +283,14 @@ def _client_hello(host: str, size: int = 1700) -> bytes:
     sigalgs_list = b"\x04\x03\x08\x04\x04\x01\x05\x03\x08\x05\x05\x01\x08\x06\x06\x01"
     sigalgs = (struct.pack("!HH", 0x000D, len(sigalgs_list) + 2) +
                struct.pack("!H", len(sigalgs_list)) + sigalgs_list)
-    exts = sni + versions + groups + ecpf + sigalgs
+    # key_share: bir x25519 (0x001d) genel anahtari. TLS 1.3'te ZORUNLU (yukaridaki
+    # aciklamaya bak). 32 baytin gecerli bir egri noktasi olmasi gerekmez: sunucu
+    # anahtari ancak TLS 1.3 konusmaya karar verdikten — yani probun bekledigi
+    # ServerHello'yu gonderdikten — SONRA dogrular.
+    keyshare_entry = struct.pack("!HH", 0x001d, 32) + os.urandom(32)
+    keyshare = (struct.pack("!HH", 0x0033, len(keyshare_entry) + 2) +
+                struct.pack("!H", len(keyshare_entry)) + keyshare_entry)
+    exts = sni + versions + groups + ecpf + sigalgs + keyshare
 
     ciphers = (b"\x13\x01\x13\x02\x13\x03"      # TLS 1.3
                b"\xc0\x2b\xc0\x2f\xc0\x2c\xc0\x30"
@@ -422,6 +432,18 @@ def choose(log=print, deadline: float = None):
     if not online():
         return SAFE_FALLBACK[0], SAFE_FALLBACK[1], "offline", None
 
+    # 0.5) Olcum ARACI saglam mi? Prob hello'muz DOKUNULMADAN bir kontrol
+    #      hedefinden gercek ServerHello (0x16) cekebilmeli. Cekemiyorsa (ornegin
+    #      hello zorunlu bir TLS 1.3 uzantisini kaybetmisse sunucu alarm 109 doner)
+    #      sorun hatta DEGIL aractadir: o zaman her aday alakasiz bir nedenle
+    #      "basarisiz" gorunur ve sabit bir yedege sessizce dusmek — tam da bir kez
+    #      sabit hatta Discord'u RST'leyen sey — olur. Burada, yuksek sesle yakala.
+    if not _apparatus_ok(deadline):
+        log("[!] Olcum araci saglam degil: prob hello dokunulmadan kontrol "
+            "hedefinden ServerHello cekemiyor. Varsayilan strateji kullaniliyor "
+            "— bu bir KOD hatasidir, hat sorunu degil.")
+        return default[0], default[1], "arac-bozuk", None
+
     # 1) Engelli bir hedef bul. Motor kapali haldeyken acilmayan ilk hedef,
     #    adaylarin uzerinde olculecegi hedeftir.
     target = target_ip = None
@@ -467,7 +489,11 @@ def choose(log=print, deadline: float = None):
             continue
         return decoy, split, "olculdu", target
 
-    return SAFE_FALLBACK[0], SAFE_FALLBACK[1], "asilamadi", target
+    # Hicbir aday hem engeli acti hem de normal siteleri korudu. Tek sabit yedek
+    # iki hatta birden uymaz (badsum sabit hatta dogru, badseq NAT'ta dogru), o
+    # yuzden yedegi hatta gore SEC — tahmin etme.
+    decoy, split = _nat_safe_fallback(log)
+    return decoy, split, "asilamadi", target
 
 
 def _controls_ok(decoy: str, split: str, deadline: float) -> bool:
@@ -492,6 +518,48 @@ def _controls_ok(decoy: str, split: str, deadline: float) -> bool:
         except Exception:
             return False
     return checked > 0
+
+
+def _apparatus_ok(deadline: float) -> bool:
+    """Olcum aracinin kendisi saglam mi.
+
+    Prob hello'muzu DOKUNULMADAN (motor/diverter yok) bir kontrol hedefine gonderip
+    gercek bir ServerHello (0x16) geliyor mu diye bakar. Geliyorsa arac saglam:
+    basari 0x16 ile olculebiliyor. Gelmiyorsa (hepsi alarm/RST) ya kontroller
+    ulasilamiyor ya da hello bozuk — iki durumda da guvenilir olcum yapilamaz, o
+    yuzden olcume devam edip yanlis yedek secmektense geri adim atmak dogru. Ilk
+    0x16'da True doner, yani saglikli hatta tek fazladan el sikismasi olur.
+    """
+    for host in CONTROL_TARGETS:
+        if time.time() > deadline:
+            break
+        ip = resolve(host, deadline)
+        if ip and tls_reachable(ip, host):
+            return True
+    return False
+
+
+def _nat_safe_fallback(log=print):
+    """Olcum hicbir aday secemediginde, hatta gore dogru yedek (decoy, split).
+
+    Tek sabit yedek iki hatta birden calismaz: badsum'in bozuk saglamasi NAT/
+    tethering yolunda ONARILIR ve sahte paket sunucuya gecerli varip TUM HTTPS'i
+    bozar — orada badseq gerekir. Sabit hatta ise sunucu decoy'u her zaman atar,
+    yani badsum hem guvenli hem de birlestiren DPI'a karsi kanitlanmis
+    varsayilandir; badseq'in decoy'u pencere disi kaldigi icin sabit hatta
+    Discord'u ACAMAZ. Hatti ayirt etmek icin badsum'in kontrol sitelerini bozup
+    bozmadigina bakariz (bu tam da NAT imzasidir). Karar tahmin degil OLCULSUN
+    diye kendi kucuk suremizi veririz: asil tarama butcesi bitmis olabilir.
+    """
+    nat_deadline = time.time() + 12.0
+    try:
+        if _controls_ok("badsum", "record", nat_deadline):
+            log("[*] Yedek: badsum/record (sabit hat — saglama onarilmiyor)")
+            return "badsum", "record"
+    except Exception:
+        pass
+    log("[*] Yedek: badseq/record (NAT/tethering — saglama onariliyor)")
+    return SAFE_FALLBACK
 
 
 def resolve_strategy(settings: dict, log=print, force: bool = False):

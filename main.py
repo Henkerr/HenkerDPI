@@ -5,6 +5,7 @@ TTL-based fake packet + reverse TCP fragmentation + DoH.
 """
 
 import sys
+import time
 import threading
 import ctypes
 import pydivert
@@ -61,6 +62,9 @@ class BypassEngine:
         self._force_remeasure = False
         self._refresh_match_cache()
         self.stats = {"bypassed": 0, "passed": 0}
+        # Recent per-ClientHello events (time, host, action) for the live UI log.
+        from collections import deque
+        self.events = deque(maxlen=150)
         self.running = False
 
     def _refresh_match_cache(self):
@@ -189,6 +193,7 @@ class BypassEngine:
         """Run bypass loop. Call from a separate thread."""
         self._stop_event.clear()
         self.stats = {"bypassed": 0, "passed": 0}
+        self.events.clear()
         self._settings = load_settings()
         self._refresh_match_cache()
 
@@ -320,12 +325,15 @@ class BypassEngine:
             if source != "onbellek":
                 self._log(f"[*] Strateji: {self._decoy_mode}/{self._split_mode}")
         except Exception as e:
-            # A failed measurement must never stop the engine — fall back to a
-            # NAT-safe pair. NOT badsum: on iPhone/carrier NAT the bad checksum
-            # is repaired, the decoy then reaches the server as valid and breaks
-            # every HTTPS site. badseq's decoy sits outside the receive window,
-            # so the server always drops it and no handshake is poisoned.
-            self._tuned = ("badseq", "record")
+            # A failed measurement must never stop the engine. Only autotune's own
+            # fallback can tell a NAT line from a fixed one (it can still reach the
+            # control sites); a bare exception here cannot, so it must not hard-pin
+            # badseq — that is exactly what leaves a fixed home line unable to open
+            # Discord. Fall back to the settings default (badsum/record), which is
+            # safe on a fixed line — the common case — and gets corrected by the
+            # next network-change re-measure.
+            self._tuned = (self._settings.get("decoy_mode", "badsum"),
+                           self._settings.get("split_mode", "record"))
             self._refresh_match_cache()
             self._log(f"[!] Otomatik strateji secimi basarisiz ({e}) — varsayilan")
 
@@ -434,6 +442,7 @@ class BypassEngine:
                                                      self._decoy_mode,
                                                      self._split_mode):
                                 self.stats["bypassed"] += 1
+                                self.events.append((time.time(), sni, "bypass"))
                                 # In ALL mode, log every 50th bypass to reduce noise
                                 if self._mode == MODE_ALL:
                                     if self.stats["bypassed"] % 50 == 1:
@@ -441,6 +450,8 @@ class BypassEngine:
                                 else:
                                     self._log(f"[BYPASS] {sni}")
                                 continue
+                        elif sni:
+                            self.events.append((time.time(), sni, "pass"))
 
                     self._main_handle.send(packet)
                     self.stats["passed"] += 1
