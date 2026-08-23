@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="tr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HenkerDPI</title>
+<link rel="stylesheet" href="pf.css">
+<style>
+html,body{height:100%}
+body{margin:0;display:grid;place-items:center;width:100vw;height:100vh;overflow:hidden;box-sizing:border-box;padding-top:34px;background:#08080b;user-select:none;-webkit-user-select:none}
+figure{width:360px;margin:0}
+figure figcaption{display:none}
+.win.off .stat b{opacity:.72}
+.cmb .win.off .mid .shl{filter:grayscale(.6) brightness(.85)}
+.cset{position:fixed;inset:0;z-index:50;display:none;background:rgba(10,6,8,.7);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);font-family:'RJ',system-ui,sans-serif;padding:14px;place-items:center}
+.cset.open{display:grid}
+.cset-card{width:100%;max-width:340px;max-height:94vh;overflow:auto;background:radial-gradient(90% 60% at 50% 0%,#1c0c11,#0a0608);border:1px solid #43141b;border-radius:14px;padding:16px;box-shadow:0 24px 60px rgba(0,0,0,.6)}
+.cset-hd{display:flex;justify-content:space-between;align-items:center;font-family:'OR';font-weight:700;font-size:13px;letter-spacing:.06em;color:#f2e6e8}
+.cset-hd .x{cursor:pointer;color:#c9a6ab;border:1px solid #3a2a2d;background:#180d10;border-radius:8px;width:30px;height:30px;display:grid;place-items:center;font-size:13px}
+.cset-grp{font-family:'OR';font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#ff8a97;margin:15px 0 8px}
+.cset-th{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}
+.cset-th b{aspect-ratio:1;border-radius:8px;cursor:pointer;border:2px solid transparent;display:grid;place-items:center;font-size:8px;font-weight:700;color:#fff;text-align:center;line-height:1;text-shadow:0 1px 2px rgba(0,0,0,.55)}
+.cset-th b.on{border-color:#4ADE80;box-shadow:0 0 10px rgba(74,222,128,.45)}
+.cset-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 0;border-top:1px solid #2a1216}
+.cset-row .cl{font-family:'OR';font-size:12px;color:#f2e6e8}
+.cset-row .cl small{display:block;font-family:'RJ';font-size:11px;color:#a97b82;font-weight:400;margin-top:2px}
+.cseg{display:inline-flex;gap:3px;background:#180d10;border:1px solid #3a2a2d;border-radius:8px;padding:3px}
+.cseg span{font-family:'OR';font-size:11px;padding:5px 10px;border-radius:6px;color:#c9a6ab;font-weight:700;cursor:pointer}
+.cseg .on{background:#4ADE80;color:#0a0608}
+.cmenu{font-family:'OR';color:#4ADE80;font-size:13px;cursor:pointer}
+.csw{width:42px;height:24px;border-radius:99px;background:#2a1216;border:1px solid #43141b;position:relative;cursor:pointer;flex:none;transition:.15s}
+.csw.on{background:#4ADE80;border-color:#4ADE80}
+.csw::after{content:'';position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#f2e6e8;transition:.15s}
+.csw.on::after{transform:translateX(18px);background:#0a0608}
+
+</style>
+</head><body>
+<figure class="cmb"><div class="win" id="win"><div class="hd"><span class="wm"><span class="lg"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/></svg></span>HENKER<b>DPI</b></span><button class="ibtn" id="gear"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.4"/><circle cx="12" cy="12" r="7.2"/><path d="M19.4 12.0 L22.0 12.0"/><path d="M17.2 17.2 L19.1 19.1"/><path d="M12.0 19.4 L12.0 22.0"/><path d="M6.8 17.2 L4.9 19.1"/><path d="M4.6 12.0 L2.0 12.0"/><path d="M6.8 6.8 L4.9 4.9"/><path d="M12.0 4.6 L12.0 2.0"/><path d="M17.2 6.8 L19.1 4.9"/></svg></button></div>
+  <div class="enemy"><div class="lb"><span>DPI FIREWALL</span><span class="z"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/></svg>%18</span></div><div class="hbar"><div class="f"></div><div class="seg"></div></div></div>
+  <div class="mid"><div class="shl"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4.5 6v6c0 4.5 3.2 7.3 7.5 8.8 4.3-1.5 7.5-4.3 7.5-8.8V6Z"/><path d="M8.6 12l2.4 2.4L15.6 9.4"/></svg></div><div class="gt" id="gtLabel">GUARDIAN · TAM GÜÇ</div><div class="combo" id="numCombo">0</div><div class="ck">BLOCKED · COMBO</div></div>
+  <div class="ally"><div class="lb"><span>KALKAN</span><span>100%</span></div><div class="hbar"><div class="f"></div></div>
+    <button class="stop" id="stopBtn"><span class="sq"></span>Geri Çekil</button></div><div class="gin"></div></div></figure>
+<div class="cset" id="cset"><div class="cset-card"><div class="cset-hd"><span>AYARLAR</span><button class="x" id="csetClose">&times;</button></div><div class="cset-grp">Tema</div><div class="cset-th" id="cTh"></div><div class="cset-grp">Ağ</div><div class="cset-row"><div class="cl">Bypass Modu<small id="cModeSub">Tüm siteler</small></div><div class="cseg" id="cMode"><span class="on">TÜMÜ</span><span>ÖZEL</span></div></div><div class="cset-row"><div class="cl">DNS<small>Güvenli çözümleyici</small></div><div class="cmenu" id="cDns">CLOUDFLARE</div></div><div class="cset-row"><div class="cl">Güvenli DNS<small>Şifreli DNS</small></div><div class="csw" id="cSwDns"></div></div><div class="cset-grp">Sistem</div><div class="cset-row"><div class="cl">Açılışta başlat<small>Windows ile</small></div><div class="csw" id="cSwAuto"></div></div></div></div>
+<script src="bridge.js"></script>
+<script>
+const $=id=>document.getElementById(id), p2=n=>String(n).padStart(2,'0'), fmt=n=>Number(n).toLocaleString('tr-TR');
+function setTxt(el,t){for(const n of el.childNodes){if(n.nodeType===3&&n.nodeValue.trim()){n.nodeValue=t;return;}}el.appendChild(document.createTextNode(t));}
+function buildTh(el){HDPI.THEMES.forEach(([k,name,col])=>{const b=document.createElement('b');b.style.background=col;b.textContent=name;b.dataset.k=k;b.addEventListener('click',()=>HDPI.nav(k));el.appendChild(b);});}
+
+buildTh($("cTh"));
+function render(s){
+  const on=s.running; $("win").classList.toggle("off",!on);
+  $("gtLabel").textContent = on ? "GUARDIAN · TAM GÜÇ" : "GUARDIAN · BEKLEMEDE";
+  $("numCombo").textContent = on ? fmt(s.bypassed) : "0";
+  setTxt($("stopBtn"), on ? "Geri Çekil" : "Devreye Al");
+  $("cTh").querySelectorAll("b").forEach(b=>b.classList.toggle("on",b.dataset.k===s.theme));
+  $("cMode").querySelectorAll("span").forEach(sp=>sp.classList.toggle("on",(sp.textContent.trim()==="TÜMÜ")===(s.mode==="all")));
+  $("cModeSub").textContent = s.mode==="all"?"Tüm siteler":"Seçili kategoriler";
+  $("cDns").textContent = (s.dns_name||"Cloudflare").toUpperCase();
+  $("cSwDns").classList.toggle("on",!!s.dns_enabled);
+  $("cSwAuto").classList.toggle("on",!!s.autostart);
+}
+const P=HDPI.poll(render);
+$("stopBtn").addEventListener("click", async()=>{ await HDPI.toggle(); P.tick(); });
+$("cMode").addEventListener("click", async e=>{ const sp=e.target.closest("span"); if(!sp)return; await HDPI.setMode(sp.textContent.trim()==="TÜMÜ"?"all":"selective"); P.tick(); });
+$("cDns").addEventListener("click", async()=>{ const D=HDPI.DNS,s=await HDPI.getState(); const i=D.findIndex(d=>d[1].toUpperCase()===$("cDns").textContent.trim()); await HDPI.setDns(D[(i+1)%D.length][0]); P.tick(); });
+$("cSwDns").addEventListener("click", async()=>{ const s=await HDPI.getState(); await HDPI.setDnsEnabled(!s.dns_enabled); P.tick(); });
+$("cSwAuto").addEventListener("click", async()=>{ const s=await HDPI.getState(); await HDPI.setAutostart(!s.autostart); P.tick(); });
+$("gear").addEventListener("click", ()=>$("cset").classList.add("open"));
+$("csetClose").addEventListener("click", ()=>$("cset").classList.remove("open"));
+$("cset").addEventListener("click", e=>{ if(e.target.id==="cset") e.target.classList.remove("open"); });
+
+</script>
+</body></html>

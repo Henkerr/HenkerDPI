@@ -1,0 +1,257 @@
+"""HenkerDPI core process: bypass engine + system tray + local IPC.
+
+The window UI is a SEPARATE, on-demand process (ui.py) launched from the tray.
+While HenkerDPI sits in the tray, only this process runs (engine + tray, ~35 MB);
+no WebView2 is alive. Opening the window spawns ui.py; closing it exits ui.py and
+frees all of its memory. ui.py reaches the engine only through the IPC below.
+
+Slice status: Mevcut theme end-to-end (state, toggle, mode, DNS, theme, autostart
+mirror). TODO next: schtasks autostart, categories/domains/log methods, the other
+four themes, single-instance for ui.py + bring-to-front, PyInstaller packaging.
+"""
+import sys, os, json, socket, threading, subprocess, time, ctypes
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+if sys.platform == "darwin":
+    from macos.engine import BypassEngine, is_admin
+else:
+    from main import BypassEngine, is_admin
+import config
+try:
+    from lang import t
+except Exception:
+    def t(k, *a, **kw): return k
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+UI_SCRIPT = os.path.join(HERE, "ui.py")
+IPC_HOST, IPC_PORT = "127.0.0.1", 47654
+
+
+class Core:
+    """Owns the bypass engine and the settings the UI reads/writes."""
+    def __init__(self):
+        self.engine = None
+        self.thread = None
+        self.running = False
+        self.started = 0.0
+        self.settings = config.load_settings()
+
+    def _run(self):
+        try:
+            self.engine.start()          # blocks until stop()
+        except Exception as e:
+            print("[!] engine:", e)
+        finally:
+            self.running = False
+
+    def start(self):
+        if self.running:
+            return
+        self.engine = BypassEngine(verbose=False)
+        self.running = True
+        self.started = time.time()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        if self.engine and self.running:
+            try:
+                self.engine.stop()
+            except Exception:
+                pass
+        self.running = False
+
+    def toggle(self):
+        self.stop() if self.running else self.start()
+
+    def _save(self, reload=True):
+        config.save_settings(self.settings)
+        if reload and self.engine and self.running:
+            try:
+                self.engine.reload_settings()
+            except Exception:
+                pass
+
+    def state(self):
+        st = self.engine.stats if (self.engine and self.running) else {"bypassed": 0, "passed": 0}
+        s = self.settings
+        dns = s.get("doh_provider", "cloudflare")
+        return {
+            "running": self.running,
+            "bypassed": st.get("bypassed", 0),
+            "passed": st.get("passed", 0),
+            "uptime": int(time.time() - self.started) if self.running else 0,
+            "mode": s.get("mode", config.MODE_ALL),
+            "dns": dns,
+            "dns_name": config.DOH_PROVIDERS.get(dns, {}).get("name", "Cloudflare"),
+            "dns_ip": config.DOH_PROVIDERS.get(dns, {}).get("ip", "1.1.1.1"),
+            "dns_enabled": s.get("doh_enabled", True),
+            "autostart": s.get("autostart", False),
+            "theme": s.get("theme", "mevcut"),
+        }
+
+    def set_mode(self, m):        self.settings["mode"] = m; self._save()
+    def set_dns(self, d):         self.settings["doh_provider"] = d; self._save()
+    def set_dns_enabled(self, b): self.settings["doh_enabled"] = bool(b); self._save()
+    def set_theme(self, tk):      self.settings["theme"] = tk; self._save(reload=False)
+    def set_autostart(self, b):
+        self.settings["autostart"] = bool(b); self._save(reload=False)
+        # TODO: register / unregister the schtasks boot task (reuse gui.py logic).
+
+    def get_log(self, n=20):
+        """Recent real ClientHello events (domain + bypass/pass) for the live log."""
+        ev = getattr(self.engine, "events", None) if (self.engine and self.running) else None
+        if not ev:
+            return []
+        out = []
+        for ts, host, act in list(ev)[-int(n or 20):]:
+            lt = time.localtime(ts)
+            out.append({"t": "%02d:%02d:%02d" % (lt.tm_hour, lt.tm_min, lt.tm_sec),
+                        "host": host, "act": act})
+        out.reverse()                 # newest first
+        return out
+
+
+# ---------------------------------------------------------------- IPC (localhost)
+def _dispatch(core, msg):
+    m, a = msg.get("m"), msg.get("a", [])
+    if m == "get_state":        return core.state()
+    if m == "toggle":           core.toggle(); return core.state()
+    if m == "set_mode":         core.set_mode(*a); return None
+    if m == "set_dns":          core.set_dns(*a); return None
+    if m == "set_dns_enabled":  core.set_dns_enabled(*a); return None
+    if m == "set_autostart":    core.set_autostart(*a); return None
+    if m == "set_theme":        core.set_theme(*a); return None
+    if m == "get_log":          return core.get_log(*a)
+    if m == "show_ui":          show_ui(); return None
+    if m == "ping":             return "pong"
+    raise ValueError("unknown method: %r" % m)
+
+
+def _handle(conn, core):
+    with conn:
+        f = conn.makefile("rwb")
+        for line in f:
+            try:
+                resp = {"r": _dispatch(core, json.loads(line.decode("utf-8")))}
+            except Exception as e:
+                resp = {"e": str(e)}
+            try:
+                f.write((json.dumps(resp) + "\n").encode("utf-8")); f.flush()
+            except Exception:
+                break
+
+
+def ipc_server(core):
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind((IPC_HOST, IPC_PORT)); srv.listen(8)
+    while True:
+        conn, _ = srv.accept()
+        threading.Thread(target=_handle, args=(conn, core), daemon=True).start()
+
+
+def _ipc_send(msg, timeout=0.6):
+    """One-shot call to a running instance. Returns the reply, or None if none answers."""
+    try:
+        with socket.create_connection((IPC_HOST, IPC_PORT), timeout=timeout) as c:
+            f = c.makefile("rwb")
+            f.write((json.dumps(msg) + "\n").encode("utf-8")); f.flush()
+            return json.loads(f.readline().decode("utf-8"))
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------- tray + UI proc
+_ui_proc = None
+
+def show_ui():
+    """Open the window process, or no-op if it is already up."""
+    global _ui_proc
+    if _ui_proc and _ui_proc.poll() is None:
+        return  # TODO: signal the running ui.py to focus its window
+    creationflags = 0x08000000 if os.name == "nt" else 0   # CREATE_NO_WINDOW
+    _ui_proc = subprocess.Popen([sys.executable, UI_SCRIPT], cwd=HERE,
+                                creationflags=creationflags)
+
+
+def _tray_image():
+    from PIL import Image
+    png = os.path.join(HERE, "icon.png")
+    if os.path.exists(png):
+        try:
+            return Image.open(png)                 # the real HenkerDPI wolf logo
+        except Exception:
+            pass
+    from PIL import ImageDraw                        # fallback mark if the png is missing
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.ellipse((14, 16, 50, 52), outline=(77, 139, 255, 255), width=5)
+    d.rectangle((30, 10, 34, 33), fill=(77, 139, 255, 255))
+    return img
+
+
+def run_tray(core):
+    import pystray
+    lang = core.settings.get("lang", "tr")
+
+    def toggle(icon, item):
+        core.toggle(); icon.update_menu()
+
+    def quit_all(icon, item):
+        core.stop()
+        global _ui_proc
+        if _ui_proc and _ui_proc.poll() is None:
+            try: _ui_proc.terminate()
+            except Exception: pass
+        icon.stop()
+
+    menu = pystray.Menu(
+        pystray.MenuItem(t("tray_show", lang), lambda i, it: show_ui(), default=True),
+        pystray.MenuItem(lambda it: t("tray_stop", lang) if core.running else t("tray_start", lang), toggle),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem(t("tray_quit", lang), quit_all),
+    )
+    pystray.Icon("HenkerDPI", _tray_image(), "HenkerDPI", menu).run()
+
+
+def ensure_admin():
+    if os.name != "nt" or is_admin():
+        return
+    params = " ".join('"%s"' % a for a in sys.argv[1:])
+    ctypes.windll.shell32.ShellExecuteW(
+        None, "runas", sys.executable, '"%s" %s' % (os.path.abspath(__file__), params), None, 1)
+    sys.exit(0)
+
+
+def main():
+    ensure_admin()
+    if os.name == "nt":
+        ctypes.windll.kernel32.CreateMutexW(None, True, "Global\\HenkerDPI_SingleInstance")
+        if ctypes.windll.kernel32.GetLastError() == 183:   # ERROR_ALREADY_EXISTS
+            # Mutex is held — but only defer to a LIVE instance. A wedged one (mutex
+            # held, IPC dead, e.g. after a crash) must not block a fresh start.
+            if _ipc_send({"m": "ping"}) is not None:
+                _ipc_send({"m": "show_ui"})          # bring the running window to front
+                print("HenkerDPI zaten çalışıyor — pencere açıldı."); return
+            print("Önceki örnek yanıt vermiyor; devralınıyor.")
+
+    try:
+        from doh import restore_dns_from_journal
+        restore_dns_from_journal()
+    except Exception:
+        pass
+
+    core = Core()
+    threading.Thread(target=ipc_server, args=(core,), daemon=True).start()
+
+    if "--autostart" in sys.argv or core.settings.get("autostart"):
+        core.start()            # boot: run the engine, stay in the tray
+    else:
+        show_ui()               # normal launch: open the window
+    run_tray(core)              # blocks on the main thread
+
+
+if __name__ == "__main__":
+    main()

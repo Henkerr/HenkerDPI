@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="tr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HenkerDPI</title>
+<link rel="stylesheet" href="pf.css">
+<style>
+html,body{height:100%}
+body{margin:0;display:grid;place-items:center;width:100vw;height:100vh;overflow:hidden;box-sizing:border-box;padding-top:34px;background:#08080b;user-select:none;-webkit-user-select:none}
+figure{width:360px;margin:0}
+figure figcaption{display:none}
+.win.off .stat b{opacity:.72}
+.ben .win.off .pbtn{filter:grayscale(.5) brightness(.92)}
+.ben .spark canvas{width:100%;height:100%;display:block}
+.bset{position:fixed;inset:0;z-index:50;display:none;background:rgba(6,8,12,.66);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);font-family:'SG',system-ui,sans-serif;padding:14px;place-items:center}
+.bset.open{display:grid}
+.bset-card{width:100%;max-width:340px;max-height:94vh;overflow:auto;background:radial-gradient(120% 80% at 50% 0%,#12151d,#0b0d12);border:1px solid #22252f;border-radius:16px;padding:16px;box-shadow:0 24px 60px rgba(0,0,0,.6)}
+.bset-hd{display:flex;justify-content:space-between;align-items:center;font-size:16px;font-weight:600;color:#f0f2f7}
+.bset-hd .x{cursor:pointer;color:#9aa0b0;border:1px solid #22252f;background:#141620;border-radius:8px;width:30px;height:30px;display:grid;place-items:center;font-size:13px}
+.bset-grp{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#7a808f;margin:15px 0 8px}
+.bset-th{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}
+.bset-th b{aspect-ratio:1;border-radius:10px;cursor:pointer;border:2px solid transparent;display:grid;place-items:center;font-size:8px;font-weight:700;color:#fff;text-align:center;line-height:1;text-shadow:0 1px 2px rgba(0,0,0,.55)}
+.bset-th b.on{border-color:#f0f2f7;box-shadow:0 0 0 2px rgba(56,189,248,.3)}
+.bset-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 0;border-top:1px solid #191c24}
+.bset-row .bl{font-size:13px;font-weight:600;color:#e7ebf2}
+.bset-row .bl small{display:block;font-size:11px;color:#7a808f;font-weight:400;margin-top:1px}
+.bset .chip{margin-top:0}
+.bset .chip span{padding:5px 11px}
+.bset .dns{margin-top:0;cursor:pointer}
+.bsw{width:42px;height:24px;border-radius:99px;background:#23262f;position:relative;cursor:pointer;flex:none;transition:.15s}
+.bsw.on{background:#38bdf8}
+.bsw::after{content:'';position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.15s}
+.bsw.on::after{transform:translateX(18px)}
+
+</style>
+</head><body>
+<figure class="ben"><div class="win" id="win"><div class="hd"><span class="wm"><span class="lg"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4.5 6v6c0 4.5 3.2 7.3 7.5 8.8 4.3-1.5 7.5-4.3 7.5-8.8V6Z"/><path d="M8.6 12l2.4 2.4L15.6 9.4"/></svg></span>HENKER<b>DPI</b></span><button class="ibtn" id="gear"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.4"/><circle cx="12" cy="12" r="7.2"/><path d="M19.4 12.0 L22.0 12.0"/><path d="M17.2 17.2 L19.1 19.1"/><path d="M12.0 19.4 L12.0 22.0"/><path d="M6.8 17.2 L4.9 19.1"/><path d="M4.6 12.0 L2.0 12.0"/><path d="M6.8 6.8 L4.9 4.9"/><path d="M12.0 4.6 L12.0 2.0"/><path d="M17.2 6.8 L19.1 4.9"/></svg></button></div>
+  <div class="t"><div class="stat"><div class="si"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4.5 6v6c0 4.5 3.2 7.3 7.5 8.8 4.3-1.5 7.5-4.3 7.5-8.8V6Z"/><path d="M8.6 12l2.4 2.4L15.6 9.4"/></svg></div><div class="l"><div class="k">Durum</div><b id="bStatus">Korumalı</b></div></div>
+    <button class="pbtn" id="pbtn"><span class="sq"></span>Korumayı Durdur</button></div>
+  <div class="row"><div class="t col"><div class="lab"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5 7 5-14 2.5 7H21"/></svg>Bypass</div><div class="num" id="numBypass">0</div></div>
+    <div class="t col"><div class="lab"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Süre</div><div class="num" id="numSure">&mdash;</div></div></div>
+  <div class="t"><div class="lab"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5 7 5-14 2.5 7H21"/></svg>Canlı trafik</div><div class="spark"><canvas id="spark"></canvas></div></div>
+  <div class="row"><div class="t col"><div class="lab"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 3 7.5l9 4.5 9-4.5Z"/><path d="M3 12.5l9 4.5 9-4.5"/></svg>Mod</div><div class="chip" id="modeChip"><span class="on">Tümü</span><span>Seçili</span></div></div>
+    <div class="t col"><div class="lab"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18"/></svg>DNS</div><div class="dns" id="dnsVal"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18"/></svg>Cloudflare</div></div></div><div class="gin"></div></div></figure>
+<div class="bset" id="bset"><div class="bset-card"><div class="bset-hd"><span>Ayarlar</span><button class="x" id="bsetClose">&times;</button></div><div class="bset-grp">Tema</div><div class="bset-th" id="bTh"></div><div class="bset-grp">Ağ</div><div class="bset-row"><div class="bl">Bypass Modu<small id="bModeSub">Tüm siteler</small></div><div class="chip" id="bMode"><span class="on">Tümü</span><span>Seçili</span></div></div><div class="bset-row"><div class="bl">DNS<small>Güvenli çözümleyici</small></div><div class="dns" id="bDns">Cloudflare</div></div><div class="bset-row"><div class="bl">Güvenli DNS<small>Şifreli DNS</small></div><div class="bsw" id="bSwDns"></div></div><div class="bset-grp">Sistem</div><div class="bset-row"><div class="bl">Açılışta başlat<small>Windows ile</small></div><div class="bsw" id="bSwAuto"></div></div></div></div>
+<script src="bridge.js"></script>
+<script>
+const $=id=>document.getElementById(id), p2=n=>String(n).padStart(2,'0'), fmt=n=>Number(n).toLocaleString('tr-TR');
+function setTxt(el,t){for(const n of el.childNodes){if(n.nodeType===3&&n.nodeValue.trim()){n.nodeValue=t;return;}}el.appendChild(document.createTextNode(t));}
+function buildTh(el){HDPI.THEMES.forEach(([k,name,col])=>{const b=document.createElement('b');b.style.background=col;b.textContent=name;b.dataset.k=k;b.addEventListener('click',()=>HDPI.nav(k));el.appendChild(b);});}
+
+const graph=HDPI.makeGraph($("spark"), "#38bdf8", "56,189,248");
+let lastTot=0;
+buildTh($("bTh"));
+function render(s){
+  const on=s.running, win=$("win"); win.classList.toggle("off",!on);
+  $("bStatus").textContent = on?"Korumalı":"Kapalı";
+  setTxt($("pbtn"), on?"Korumayı Durdur":"Korumayı Başlat");
+  $("numBypass").textContent = on?fmt(s.bypassed):"0";
+  $("numSure").textContent = on?(p2(Math.floor(s.uptime/60))+":"+p2(s.uptime%60)):"\u2014";
+  $("modeChip").querySelectorAll("span").forEach(sp=>sp.classList.toggle("on",(sp.textContent.trim()==="Tümü")===(s.mode==="all")));
+  setTxt($("dnsVal"), s.dns_name||"Cloudflare");
+  let rate=0; if(on){ const tot=(s.bypassed||0)+(s.passed||0); rate=Math.max(0,tot-lastTot); lastTot=tot; } else lastTot=0;
+  graph.sample(on?rate:0);
+  // settings mirror
+  $("bTh").querySelectorAll("b").forEach(b=>b.classList.toggle("on",b.dataset.k===s.theme));
+  $("bMode").querySelectorAll("span").forEach(sp=>sp.classList.toggle("on",(sp.textContent.trim()==="Tümü")===(s.mode==="all")));
+  $("bModeSub").textContent = s.mode==="all"?"Tüm siteler":"Seçili kategoriler";
+  setTxt($("bDns"), s.dns_name||"Cloudflare");
+  $("bSwDns").classList.toggle("on",!!s.dns_enabled);
+  $("bSwAuto").classList.toggle("on",!!s.autostart);
+}
+const P=HDPI.poll(render);
+const cycleMode=async e=>{ const sp=e.target.closest("span"); if(!sp)return; await HDPI.setMode(sp.textContent.trim()==="Tümü"?"all":"selective"); P.tick(); };
+$("pbtn").addEventListener("click", async()=>{ await HDPI.toggle(); P.tick(); });
+$("modeChip").addEventListener("click", cycleMode);
+$("bMode").addEventListener("click", cycleMode);
+$("dnsVal").addEventListener("click", async()=>{ const D=HDPI.DNS,s=await HDPI.getState(); const i=D.findIndex(d=>d[1]===s.dns_name); await HDPI.setDns(D[(i+1)%D.length][0]); P.tick(); });
+$("bDns").addEventListener("click", async()=>{ const D=HDPI.DNS,s=await HDPI.getState(); const i=D.findIndex(d=>d[1]===s.dns_name); await HDPI.setDns(D[(i+1)%D.length][0]); P.tick(); });
+$("bSwDns").addEventListener("click", async()=>{ const s=await HDPI.getState(); await HDPI.setDnsEnabled(!s.dns_enabled); P.tick(); });
+$("bSwAuto").addEventListener("click", async()=>{ const s=await HDPI.getState(); await HDPI.setAutostart(!s.autostart); P.tick(); });
+$("gear").addEventListener("click", ()=>{ $("bset").classList.add("open"); });
+$("bsetClose").addEventListener("click", ()=>$("bset").classList.remove("open"));
+$("bset").addEventListener("click", e=>{ if(e.target.id==="bset") e.target.classList.remove("open"); });
+
+</script>
+</body></html>

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="tr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HenkerDPI</title>
+<link rel="stylesheet" href="console.css">
+<style>
+html,body{height:100%}
+body{margin:0;display:grid;place-items:center;width:100vw;height:100vh;overflow:hidden;box-sizing:border-box;padding-top:34px;background:var(--page,#08080b);user-select:none;-webkit-user-select:none}
+figure{width:392px;margin:0}
+figure figcaption{display:none}
+.win.off .dot{background:#4e7a68;box-shadow:none}
+#conSub{white-space:nowrap}
+.stream{animation:none!important}
+.con-ov{position:fixed;inset:0;z-index:60;background:rgba(2,6,5,.62);display:none;place-items:center;padding:12px}
+.con-ov.open{display:grid}
+</style>
+</head><body>
+<figure><div class="win" id="win">
+      <div class="hd"><span class="wm">HENKER<b>DPI</b></span><button class="gear" id="conGear">⚙</button></div>
+      <div class="ctrl"><div class="stat"><span class="dot"></span><div><div class="s1" id="conStatus">KORUMA AKTİF</div><div class="s2" id="conSub">DPI bypass çalışıyor · 12:30</div></div></div>
+        <button class="pw stop" id="conStop"><span class="ic"></span>DURDUR</button></div>
+      <div class="tools"><div style="display:flex;align-items:center"><span class="lab">Mod</span><div class="seg" id="conSeg"><span class="on">Tümü</span><span>Seçili</span></div></div>
+        <div class="filters"><span class="fon">Hepsi</span><span>Bypass</span><span>Engel</span><span class="srch"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5l-4-4"/></svg></span></div></div>
+      <div class="log"><div class="stream" id="conLog"><div class="ln"><span class="t">14:02:31</span><span class="ok">bypass</span> discord.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:31</span><span class="ok">bypass</span> gateway.discord.gg<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:30</span><span class="rf">refuse</span> quic → tcp<span class="mk">↺</span></div><div class="ln"><span class="t">14:02:30</span><span class="ok">bypass</span> cdn.discordapp.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:29</span><span class="ok">bypass</span> x.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:29</span><span class="ok">bypass</span> instagram.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:28</span><span class="ok">bypass</span> media.discordapp.net<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:28</span><span class="rf">refuse</span> quic → tcp<span class="mk">↺</span></div><div class="ln"><span class="t">14:02:27</span><span class="ok">bypass</span> youtube.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:27</span><span class="ok">bypass</span> twimg.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:31</span><span class="ok">bypass</span> discord.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:31</span><span class="ok">bypass</span> gateway.discord.gg<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:30</span><span class="rf">refuse</span> quic → tcp<span class="mk">↺</span></div><div class="ln"><span class="t">14:02:30</span><span class="ok">bypass</span> cdn.discordapp.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:29</span><span class="ok">bypass</span> x.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:29</span><span class="ok">bypass</span> instagram.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:28</span><span class="ok">bypass</span> media.discordapp.net<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:28</span><span class="rf">refuse</span> quic → tcp<span class="mk">↺</span></div><div class="ln"><span class="t">14:02:27</span><span class="ok">bypass</span> youtube.com<span class="mk">✓</span></div><div class="ln"><span class="t">14:02:27</span><span class="ok">bypass</span> twimg.com<span class="mk">✓</span></div></div></div>
+      <div class="foot"><span><b id="conFBypass">1284</b> bypass</span><span><b id="conFSure">12:30</b> süre</span><span>dns <b id="conFDns">1.1.1.1</b></span><span>mod <b id="conFMod">TÜMÜ</b></span></div>
+      <div class="gin"></div></div>
+      </figure>
+<div class="con-ov" id="conSettings"><figure><div class="win">
+      <div class="hd"><span class="back" id="conBack">‹ AYARLAR</span><button class="gear on">⚙</button></div>
+      <div class="rows">
+        <div class="row"><div class="rl"><b>Güvenli DNS</b><small>ISP DNS engelini aşar</small></div><div class="rr"><span class="menu" id="conSetDns">Cloudflare ▾</span><span class="sw on" id="conSwDns"></span></div></div>
+        <div class="row"><div class="rl"><b>Mod</b><small>hangi siteler aşılsın</small></div><div class="rr"><div class="seg2" id="conSetSeg"><span class="on">Tümü</span><span>Seçili</span></div></div></div>
+        <div class="row"><div class="rl"><b>Açılışta başlat</b><small>Windows ile birlikte</small></div><div class="rr"><span class="sw on" id="conSwAuto"></span></div></div>
+        <div class="row"><div class="rl"><b>RST koruması</b><small>ISP reset paketlerini düşür</small></div><div class="rr"><span class="sw" id="conSwRst"></span></div></div>
+        <div class="row"><div class="rl"><b>Tema</b></div><div class="rr"><span class="dots" id="conThemeDots"><i data-k="mevcut" style="background:#4d8bff"></i><i data-k="console" class="sel" style="background:#2DD4BF"></i><i data-k="bento" style="background:#38bdf8"></i><i data-k="arcade" style="background:#ff3d9a"></i><i data-k="combat" style="background:#16a34a"></i></span></div></div>
+        <div class="row"><div class="rl"><b>Özel alan adları</b><small>3 alan ekli</small></div><div class="rr"><span class="add">+ Ekle</span></div></div>
+        <div class="row"><div class="rl"><b>Dil</b></div><div class="rr"><span class="menu">Türkçe ▾</span></div></div>
+      </div>
+      <div class="setfoot"><span>Güvenli DNS · Kernel filtre · WinDivert</span><span>v<b>2.7</b></span></div>
+      <div class="gin"></div></div>
+      </figure></div>
+<script src="bridge.js"></script>
+<script>
+
+const $=id=>document.getElementById(id), p2=n=>String(n).padStart(2,'0'), fmt=n=>Number(n).toLocaleString('tr-TR');
+const up=s=>p2(Math.floor(s/60))+":"+p2(s%60);
+function setTxt(el,t){for(const n of el.childNodes){if(n.nodeType===3&&n.nodeValue.trim()){n.nodeValue=t;return;}}el.appendChild(document.createTextNode(t));}
+function syncSeg(el,allOn){ el.querySelectorAll("span").forEach(sp=>sp.classList.toggle("on",(sp.textContent.trim()==="Tümü")===allOn)); }
+function render(s){
+  const on=s.running;
+  $("win").classList.toggle("off",!on);
+  $("conStatus").textContent = on?"KORUMA AKTİF":"KORUMA KAPALI";
+  $("conSub").textContent = (on?"DPI bypass çalışıyor · ":"Durduruldu · ")+up(s.uptime);
+  setTxt($("conStop"), on?"DURDUR":"BAŞLAT");
+  $("conFBypass").textContent = on?fmt(s.bypassed):"0";
+  $("conFSure").textContent = on?up(s.uptime):"00:00";
+  $("conFDns").textContent = s.dns_ip||"1.1.1.1";
+  $("conFMod").textContent = s.mode==="all"?"TÜMÜ":"SEÇİLİ";
+  syncSeg($("conSeg"), s.mode==="all");
+  syncSeg($("conSetSeg"), s.mode==="all");
+  $("conSetDns").textContent = (s.dns_name||"Cloudflare")+" ▾";
+  $("conSwDns").classList.toggle("on", !!s.dns_enabled);
+  $("conSwAuto").classList.toggle("on", !!s.autostart);
+  $("conThemeDots").querySelectorAll("i").forEach(i=>i.classList.toggle("sel", i.dataset.k===s.theme));
+}
+const P=HDPI.poll(render);
+$("conStop").addEventListener("click", async()=>{ await HDPI.toggle(); P.tick(); });
+function cycleMode(e){ const sp=e.target.closest("span"); if(!sp)return; HDPI.setMode(sp.textContent.trim()==="Tümü"?"all":"selective").then(P.tick); }
+$("conSeg").addEventListener("click", cycleMode);
+$("conSetSeg").addEventListener("click", cycleMode);
+$("conSetDns").addEventListener("click", async()=>{ const D=HDPI.DNS, s=await HDPI.getState(); const i=D.findIndex(d=>d[1]===s.dns_name); await HDPI.setDns(D[(i+1)%D.length][0]); P.tick(); });
+$("conSwDns").addEventListener("click", async()=>{ const s=await HDPI.getState(); await HDPI.setDnsEnabled(!s.dns_enabled); P.tick(); });
+$("conSwAuto").addEventListener("click", async()=>{ const s=await HDPI.getState(); await HDPI.setAutostart(!s.autostart); P.tick(); });
+$("conSwRst").addEventListener("click", e=>e.currentTarget.classList.toggle("on"));
+$("conThemeDots").addEventListener("click", e=>{ const i=e.target.closest("i"); if(i&&i.dataset.k) HDPI.nav(i.dataset.k); });
+$("conGear").addEventListener("click", ()=>$("conSettings").classList.add("open"));
+$("conBack").addEventListener("click", ()=>$("conSettings").classList.remove("open"));
+$("conSettings").addEventListener("click", e=>{ if(e.target.id==="conSettings") e.target.classList.remove("open"); });
+
+// ---- live log: REAL domains from the engine (SNI), newest first ----
+function esc(x){ return String(x).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function renderLog(list){
+  const el=$("conLog"); if(!el) return;
+  if(!list||!list.length){ el.innerHTML='<div class="ln" style="opacity:.45">· trafik bekleniyor ·</div>'; return; }
+  el.innerHTML = list.map(function(e){
+    var cls = e.act==="bypass"?"ok":(e.act==="refuse"?"rf":"");
+    var mk  = e.act==="bypass"?"✓":(e.act==="refuse"?"↺":"·");
+    var lab = e.act==="bypass"?"bypass":(e.act==="refuse"?"refuse":"pass");
+    return '<div class="ln"><span class="t">'+e.t+'</span><span class="'+cls+'">'+lab+'</span> '+esc(e.host)+'<span class="mk">'+mk+'</span></div>';
+  }).join("");
+}
+async function tickLog(){ if(document.hidden) return; try{ renderLog(await HDPI.getLog(20)); }catch(e){} }
+HDPI.whenReady(tickLog); setInterval(tickLog, 1000);
+document.addEventListener("visibilitychange", function(){ if(!document.hidden) tickLog(); });
+
+</script>
+</body></html>

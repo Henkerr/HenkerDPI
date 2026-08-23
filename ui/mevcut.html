@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HenkerDPI</title>
+<style>
+:root{--bg:#0a0b0f;--card:#13151b;--card2:#171a21;--border:#23262f;--accent:#4d8bff;--accent2:#7aa8ff;
+  --accent-dim:#284a8f;--green:#4ade80;--fg:#f4f6f9;--fg2:#9aa0b0;--fg3:#6b7180;
+  --font:"Segoe UI",-apple-system,system-ui,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}html,body{height:100%}
+body{background:radial-gradient(120% 90% at 50% -10%,#101528,#0a0b0f 62%);color:var(--fg);
+  font-family:var(--font);-webkit-font-smoothing:antialiased;overflow:hidden;user-select:none;-webkit-user-select:none}
+.app{height:100vh;display:flex;flex-direction:column;padding:40px 16px 16px}
+header{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.logo{width:30px;height:30px;display:grid;place-items:center;border-radius:9px;
+  background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);
+  border:1px solid color-mix(in srgb,var(--accent) 34%,transparent)}
+.logo svg{width:17px;height:17px}
+.brand{font-size:16px;font-weight:600;letter-spacing:.01em}.brand b{color:var(--accent);font-weight:700}
+header .sp{flex:1}
+.badge{font-size:11px;font-weight:600;padding:5px 11px;border-radius:8px;transition:.2s}
+.badge.on{background:color-mix(in srgb,var(--green) 17%,transparent);color:var(--green)}
+.badge.off{background:var(--border);color:var(--fg3)}
+.ico{width:32px;height:32px;display:grid;place-items:center;border-radius:9px;cursor:pointer;
+  background:var(--card);border:1px solid var(--border);color:var(--fg2)}
+.ico:hover{color:var(--fg);border-color:#333846}.ico svg{width:16px;height:16px}
+
+.hero{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:0}
+.status{font-size:22px;font-weight:700;color:var(--fg2);transition:color .25s}
+.status.on{color:var(--green)}
+.sub{font-size:12px;color:var(--fg3);margin-bottom:8px}
+.orb{position:relative;width:168px;height:168px;display:grid;place-items:center;cursor:pointer}
+.orb .pulse{position:absolute;inset:14px;border-radius:50%;border:1.5px solid var(--accent);opacity:0}
+.orb.on .pulse{animation:pulse 2.8s ease-out infinite}
+.orb.on .pulse:nth-child(2){animation-delay:1.4s}
+@keyframes pulse{0%{transform:scale(.72);opacity:.55}100%{transform:scale(1.42);opacity:0}}
+.orb .glow{position:absolute;inset:-6%;border-radius:50%;opacity:0;filter:blur(6px);transition:opacity .35s;
+  background:radial-gradient(circle,color-mix(in srgb,var(--accent) 58%,transparent),transparent 66%)}
+.orb.on .glow{opacity:1;animation:breathe 3.6s ease-in-out infinite}
+@keyframes breathe{0%,100%{opacity:.5;transform:scale(.98)}50%{opacity:.95;transform:scale(1.05)}}
+.orb .core{position:absolute;inset:22px;border-radius:50%;
+  background:radial-gradient(circle at 50% 34%,#20242e,#0e1016 74%);
+  border:2px solid color-mix(in srgb,var(--accent) 40%,var(--border));
+  box-shadow:inset 0 2px 14px rgba(0,0,0,.6)}
+.orb.on .core{border-color:color-mix(in srgb,var(--accent) 85%,transparent);
+  box-shadow:inset 0 2px 14px rgba(0,0,0,.5),0 0 26px color-mix(in srgb,var(--accent) 45%,transparent)}
+.orb .pw{position:relative;z-index:1;width:56px;height:56px;color:color-mix(in srgb,var(--accent) 55%,var(--fg3));transition:.25s}
+.orb.on .pw{color:var(--accent2);filter:drop-shadow(0 0 10px color-mix(in srgb,var(--accent) 75%,transparent))}
+
+.graphcard{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:11px 13px 8px;margin-top:6px}
+.glabel{display:flex;align-items:center;gap:6px;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--fg3)}
+.glabel::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px var(--accent)}
+#spark{width:100%;height:54px;display:block;margin-top:4px}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-top:11px}
+.tile{background:var(--card);border:1px solid var(--border);border-radius:13px;padding:12px 14px}
+.tile .k{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--fg3)}
+.tile .v{font-size:25px;font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums}
+.tile.b .v{color:var(--accent2)}
+.seg{display:flex;gap:4px;margin-top:11px;background:var(--card);border:1px solid var(--border);border-radius:11px;padding:4px}
+.seg button{flex:1;font-family:inherit;font-size:13px;font-weight:600;padding:9px 0;border:none;border-radius:8px;cursor:pointer;background:transparent;color:var(--fg3)}
+.seg button.on{background:var(--accent);color:#04102a}
+.dnsline{text-align:center;font-size:11.5px;color:var(--fg3);margin-top:11px}.dnsline b{color:var(--accent)}
+
+/* ---- own settings overlay (blue) ---- */
+.mset{position:fixed;inset:0;z-index:50;display:none;background:rgba(6,8,14,.66);backdrop-filter:blur(3px);
+  -webkit-backdrop-filter:blur(3px);padding:14px;place-items:center}
+.mset.open{display:grid}
+.mset-card{width:100%;max-width:340px;max-height:94vh;overflow:auto;background:radial-gradient(120% 80% at 50% 0%,#141826,#0c0e15);
+  border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 24px 60px rgba(0,0,0,.6)}
+.mset-hd{display:flex;justify-content:space-between;align-items:center;font-size:16px;font-weight:600}
+.mset-hd .x{cursor:pointer;color:var(--fg2);border:1px solid var(--border);background:var(--card);border-radius:8px;width:30px;height:30px;display:grid;place-items:center;font-size:13px}
+.mset-grp{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg3);margin:15px 0 8px}
+.mset-th{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}
+.mset-th b{aspect-ratio:1;border-radius:10px;cursor:pointer;border:2px solid transparent;display:grid;place-items:center;
+  font-size:8px;font-weight:700;color:#fff;text-align:center;line-height:1;text-shadow:0 1px 2px rgba(0,0,0,.55)}
+.mset-th b.on{border-color:var(--fg);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 45%,transparent)}
+.mrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 0;border-top:1px solid #1a1d26}
+.mrow .l{font-size:13px;font-weight:600;color:#e7ebf2}
+.mrow .l small{display:block;font-size:11px;color:var(--fg3);font-weight:400;margin-top:1px}
+.mchip{display:inline-flex;gap:4px;background:#0d0f16;border:1px solid var(--border);border-radius:9px;padding:3px}
+.mchip span{font-size:11px;padding:5px 10px;border-radius:6px;color:var(--fg3);font-weight:600;cursor:pointer}
+.mchip .on{background:var(--accent);color:#04102a}
+.mmenu{color:var(--accent);font-size:14px;font-weight:600;cursor:pointer}
+.msw{width:42px;height:24px;border-radius:99px;background:#23262f;position:relative;cursor:pointer;flex:none;transition:.15s}
+.msw.on{background:var(--accent)}
+.msw::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.15s}
+.msw.on::after{transform:translateX(18px)}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v9"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/></svg></span>
+    <span class="brand">HENKER<b>DPI</b></span><span class="sp"></span>
+    <span class="badge off" id="badge">Çevrimdışı</span>
+    <button class="ico" id="gear" title="Ayarlar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="7.4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.5 1.5M17.6 17.6l1.5 1.5M19.1 4.9l-1.5 1.5M6.4 17.6l-1.5 1.5"/></svg></button>
+  </header>
+
+  <section class="hero">
+    <div class="status" id="status">Bypass Kapalı</div>
+    <div class="sub" id="sub">Başlatmak için dokun</div>
+    <div class="orb" id="orb" role="button" tabindex="0" aria-label="Korumayı aç/kapat">
+      <span class="pulse"></span><span class="pulse"></span>
+      <span class="glow"></span><span class="core"></span>
+      <svg class="pw" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v9"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/></svg>
+    </div>
+  </section>
+
+  <div class="graphcard">
+    <div class="glabel">Canlı Trafik</div>
+    <canvas id="spark"></canvas>
+  </div>
+  <div class="stats">
+    <div class="tile b"><div class="k">Bypass</div><div class="v" id="bypass">0</div></div>
+    <div class="tile"><div class="k">Süre</div><div class="v" id="sure">—</div></div>
+  </div>
+  <div class="seg" id="modeSeg"><button data-mode="all">Tümü</button><button data-mode="selective">Seçili</button></div>
+  <div class="dnsline">DNS <b id="dnsName">Cloudflare</b></div>
+</div>
+
+<div class="mset" id="mset"><div class="mset-card">
+  <div class="mset-hd"><span>Ayarlar</span><button class="x" id="msetClose">&times;</button></div>
+  <div class="mset-grp">Tema</div><div class="mset-th" id="mTh"></div>
+  <div class="mset-grp">Ağ</div>
+  <div class="mrow"><div class="l">Bypass Modu<small id="mModeSub">Tüm siteler</small></div><div class="mchip" id="mMode"><span class="on">Tümü</span><span>Seçili</span></div></div>
+  <div class="mrow"><div class="l">DNS<small>Güvenli çözümleyici</small></div><div class="mmenu" id="mDns">Cloudflare</div></div>
+  <div class="mrow"><div class="l">Güvenli DNS<small>Şifreli DNS</small></div><div class="msw" id="mSwDns"></div></div>
+  <div class="mset-grp">Sistem</div>
+  <div class="mrow"><div class="l">Açılışta başlat<small>Windows ile</small></div><div class="msw" id="mSwAuto"></div></div>
+</div></div>
+
+<script src="bridge.js"></script>
+<script>
+const $=id=>document.getElementById(id), p2=n=>String(n).padStart(2,"0"), fmt=n=>Number(n).toLocaleString("tr-TR");
+function setTxt(el,t){for(const n of el.childNodes){if(n.nodeType===3&&n.nodeValue.trim()){n.nodeValue=t;return;}}el.appendChild(document.createTextNode(t));}
+
+/* ---- live traffic canvas (real throughput) ---- */
+const graph=HDPI.makeGraph($("spark"), "#4d8bff", "77,139,255");
+let lastTot=0;
+
+/* ---- state ---- */
+function buildTh(el){HDPI.THEMES.forEach(([k,name,col])=>{const b=document.createElement("b");b.style.background=col;b.textContent=name;b.dataset.k=k;b.addEventListener("click",()=>HDPI.nav(k));el.appendChild(b);});}
+buildTh($("mTh"));
+function render(s){
+  const on=s.running;
+  $("orb").classList.toggle("on",on);
+  $("status").textContent=on?"Koruma Aktif":"Bypass Kapalı"; $("status").classList.toggle("on",on);
+  $("sub").textContent=on?"DPI bypass çalışıyor":"Başlatmak için dokun";
+  $("badge").textContent=on?"Çevrimiçi":"Çevrimdışı"; $("badge").className="badge "+(on?"on":"off");
+  $("bypass").textContent=on?fmt(s.bypassed):"0";
+  $("sure").textContent=on?(p2(Math.floor(s.uptime/60))+":"+p2(s.uptime%60)):"—";
+  document.querySelectorAll("#modeSeg button").forEach(b=>b.classList.toggle("on",b.dataset.mode===s.mode));
+  $("dnsName").textContent=s.dns_name||"Cloudflare";
+  let rate=0; if(on){ const tot=(s.bypassed||0)+(s.passed||0); rate=Math.max(0,tot-lastTot); lastTot=tot; } else lastTot=0;
+  graph.sample(on?rate:0);
+  // settings mirror
+  $("mTh").querySelectorAll("b").forEach(b=>b.classList.toggle("on",b.dataset.k===s.theme));
+  $("mMode").querySelectorAll("span").forEach(sp=>sp.classList.toggle("on",(sp.textContent.trim()==="Tümü")===(s.mode==="all")));
+  $("mModeSub").textContent=s.mode==="all"?"Tüm siteler":"Seçili kategoriler";
+  setTxt($("mDns"), s.dns_name||"Cloudflare");
+  $("mSwDns").classList.toggle("on",!!s.dns_enabled);
+  $("mSwAuto").classList.toggle("on",!!s.autostart);
+}
+const P=HDPI.poll(render);
+async function toggle(){ await HDPI.toggle(); P.tick(); }
+$("orb").addEventListener("click",toggle);
+$("orb").addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();toggle();}});
+const cycleMode=async e=>{const b=e.target.closest("[data-mode],span");if(!b)return;const all=(b.dataset.mode||b.textContent.trim())==="all"||b.textContent.trim()==="Tümü";await HDPI.setMode(all?"all":"selective");P.tick();};
+$("modeSeg").addEventListener("click",cycleMode);
+$("mMode").addEventListener("click",cycleMode);
+$("mDns").addEventListener("click",async()=>{const D=HDPI.DNS,s=await HDPI.getState();const i=D.findIndex(d=>d[1]===s.dns_name);await HDPI.setDns(D[(i+1)%D.length][0]);P.tick();});
+$("mSwDns").addEventListener("click",async()=>{const s=await HDPI.getState();await HDPI.setDnsEnabled(!s.dns_enabled);P.tick();});
+$("mSwAuto").addEventListener("click",async()=>{const s=await HDPI.getState();await HDPI.setAutostart(!s.autostart);P.tick();});
+$("gear").addEventListener("click",()=>$("mset").classList.add("open"));
+$("msetClose").addEventListener("click",()=>$("mset").classList.remove("open"));
+$("mset").addEventListener("click",e=>{if(e.target.id==="mset")e.target.classList.remove("open");});
+</script>
+</body>
+</html>
