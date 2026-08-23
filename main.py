@@ -165,6 +165,8 @@ class BypassEngine:
         # captured once so the default (IPv4-only) path stays byte-for-byte
         # identical to before.
         ipv6_on = self._settings.get("ipv6_bypass_enabled", False)
+        seen = {}                       # dst addr -> last time we logged an engel
+        LOG_TTL = 12.0                  # dedup window for the live-log entries
         while True:
             try:
                 pkt = handle.recv()
@@ -181,6 +183,22 @@ class BypassEngine:
                 if icmp is not None:
                     handle.send(icmp)   # inbound → local socket sees ECONNREFUSED
                     # original NOT re-sent → QUIC Initial is dropped
+                    # Real "engel" event for the live UI: this QUIC attempt was
+                    # refused, so the app falls back to the TCP path the bypass
+                    # can act on. Deduped per destination — Chromium re-probes
+                    # QUIC constantly, and an unthrottled entry per probe would
+                    # flood the 150-slot ring and evict the bypass lines.
+                    try:
+                        dst = pkt.dst_addr
+                        now = time.time()
+                        if now - seen.get(dst, 0.0) > LOG_TTL:
+                            seen[dst] = now
+                            self.events.append((now, dst, "block"))
+                            if len(seen) > 512:   # bound the dedup table
+                                seen = {k: v for k, v in seen.items()
+                                        if now - v < LOG_TTL}
+                    except Exception:
+                        pass
                 else:
                     handle.send(pkt)    # forwarded untouched
             except Exception:
