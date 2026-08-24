@@ -148,6 +148,12 @@ HOVER_ANIM_MS = 60
 PULSE_FRAMES = 18
 PULSE_MS = 62
 
+# Windows sends the tray icon's callback message with this lparam when the user
+# CLICKS a notification we raised (it lands in the Action Center, so the click
+# can come long after). pystray 0.19.5 only handles the mouse events, so without
+# the hook in _hook_balloon_click a clicked notification would do nothing.
+NIN_BALLOONUSERCLICK = 0x0400 + 5
+
 
 def _load_theme():
     try:
@@ -1345,6 +1351,37 @@ class HenkerDPIApp(ctk.CTk):
                                    state="normal")
         self._update_notes.configure(text=t("update_notes", self._lang))
         self._update_close.configure(state="normal")
+        self._notify_update(info)
+
+    def _notify_update(self, info):
+        """Raise a Windows notification for an update found while in the tray.
+
+        Only meaningful with a live tray icon: pystray can raise a balloon only
+        from a running icon, and with the window open the banner above is
+        already on screen. This is the case the banner alone could not cover —
+        the app runs from the boot task and the user never opens the window.
+        """
+        icon = self._tray_icon
+        if icon is None:
+            return
+        try:
+            icon.notify(
+                t("update_notify", self._lang).format(version=info.version),
+                "HenkerDPI")
+        except Exception:
+            pass          # a notification is never worth breaking the app for
+
+    def _update_from_notification(self):
+        """The notification was clicked: show the window, then update.
+
+        The window is restored first on purpose. This is an elevated tool
+        replacing its own executable, so the download / verify / restart steps
+        belong on screen in the banner rather than happening invisibly.
+        """
+        if self._update_busy or not self._update_info:
+            return
+        self._restore()
+        self._do_update()
 
     def _show_update_bar(self, message: str):
         self._update_msg.configure(text=message)
@@ -1529,7 +1566,40 @@ class HenkerDPIApp(ctk.CTk):
             pystray.MenuItem(t("tray_quit", self._lang),
                              lambda *a: self.after(0, self._quit)),
         )
-        return pystray.Icon("HenkerDPI", img, "HenkerDPI", menu)
+        icon = pystray.Icon("HenkerDPI", img, "HenkerDPI", menu)
+        self._hook_balloon_click(icon)
+        return icon
+
+    def _hook_balloon_click(self, icon):
+        """Make a click on our Windows notification install the update.
+
+        pystray builds its win32 message map out of BOUND methods inside
+        Icon.__init__, so replacing icon._on_notify afterwards would never be
+        seen — the entry in that map is what has to be wrapped. This is private
+        pystray API, so any failure must stay harmless: the notification still
+        appears, it just stops being clickable.
+        """
+        if os.name != "nt":
+            return
+        try:
+            from pystray._util import win32 as _pswin32
+            handlers = icon._message_handlers
+            original = handlers[_pswin32.WM_NOTIFY]
+        except Exception:
+            return
+
+        def on_notify(wparam, lparam):
+            if lparam == NIN_BALLOONUSERCLICK:
+                # Hop to the Tk thread: this runs inside the icon's own window
+                # procedure, and the update path stops that very icon.
+                self.after(0, self._update_from_notification)
+                return
+            return original(wparam, lparam)
+
+        try:
+            handlers[_pswin32.WM_NOTIFY] = on_notify
+        except Exception:
+            pass
 
     def _show_tray(self):
         if not HAS_TRAY or self._tray_icon:

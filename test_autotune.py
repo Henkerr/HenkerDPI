@@ -113,6 +113,53 @@ check("config.APP_VERSION matches setup.iss AppVersion",
       _iss_t is not None and _app == _iss_t,
       "APP_VERSION=%s setup.iss=%s" % (config.APP_VERSION, _iss))
 
+# 5) WINDOWS NOTIFICATION HOOK — a click on the update notification must reach
+#    the updater. The hook wraps a PRIVATE pystray structure (Icon builds
+#    _message_handlers out of bound methods in __init__, so the dict entry is
+#    the only thing that can be wrapped). A pystray upgrade can therefore break
+#    it silently: the notification would still appear and simply do nothing.
+#    Catch that here instead of in the wild.
+if os.name == "nt":
+    try:
+        import pystray
+        from pystray._util import win32 as _pswin32
+
+        import gui
+    except Exception as exc:                       # pragma: no cover
+        print("SKIP - notification hook check (import failed: %s)" % exc)
+    else:
+        _fired = []
+
+        class _FakeApp:
+            def after(self, _ms, fn):
+                _fired.append(fn)
+
+            def _update_from_notification(self):
+                pass                    # only the routing is under test here
+
+        _icon = pystray.Icon("selftest", None, "selftest", pystray.Menu())
+        _before = _icon._message_handlers[_pswin32.WM_NOTIFY]
+        gui.HenkerDPIApp._hook_balloon_click(_FakeApp(), _icon)
+        check("balloon-click hook replaced pystray's WM_NOTIFY handler",
+              _before is not _icon._message_handlers[_pswin32.WM_NOTIFY])
+
+        _icon._message_handlers[_pswin32.WM_NOTIFY](0, gui.NIN_BALLOONUSERCLICK)
+        check("clicking the update notification routes to the updater",
+              len(_fired) == 1, "fired=%d" % len(_fired))
+
+        # An ordinary tray click must still reach pystray's own handler,
+        # otherwise the hook would break showing/among the menu.
+        _delegated = []
+        _icon._message_handlers[_pswin32.WM_NOTIFY] = \
+            lambda _w, lparam: _delegated.append(lparam)
+        gui.HenkerDPIApp._hook_balloon_click(_FakeApp(), _icon)
+        _fired.clear()
+        _icon._message_handlers[_pswin32.WM_NOTIFY](0, _pswin32.WM_LBUTTONUP)
+        check("ordinary tray clicks still reach pystray's own handler",
+              _delegated == [_pswin32.WM_LBUTTONUP] and not _fired)
+else:
+    print("SKIP - notification hook check (not Windows)")
+
 print()
 print("ALL PASS" if not fails else "FAILED: " + ", ".join(fails))
 sys.exit(1 if fails else 0)
