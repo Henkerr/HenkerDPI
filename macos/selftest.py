@@ -124,6 +124,70 @@ def run(log=print) -> int:
                 raise AssertionError("missing %r in:\n%s" % (fragment, off))
     check("system-proxy restore script", restore)
 
+    # 6b. networksetup reports "no PAC URL" as the literal string "(null)".
+    #     Stored verbatim it is truthy, and the restore then writes
+    #     `-setautoproxyurl <svc> '(null)'` into the user's System Settings for
+    #     good. Observed on a real journal before it was fixed.
+    def null_pac_url():
+        from macos import sysproxy
+        script = sysproxy._restore_script({
+            "Wi-Fi": {"auto": {"url": "(null)", "enabled": False},
+                      "bypass": []}})
+        if "setautoproxyurl" in script:
+            raise AssertionError("(null) was written back as a URL:\n%s" % script)
+        if "-setautoproxystate Wi-Fi off" not in script:
+            raise AssertionError("the PAC was not switched off:\n%s" % script)
+        # Our own leftover URL must never be recorded as the user's setting:
+        # networksetup cannot unset a PAC URL, so one survives every clean
+        # restore and would otherwise be laundered into the journal next time.
+        ours = "http://127.0.0.1:8080/%s" % sysproxy.PAC_FILENAME
+        if sysproxy._clean_pac_url(ours) != "":
+            raise AssertionError("our own PAC URL was kept: %s" % ours)
+        theirs = "http://proxy.example.com/company.pac"
+        if sysproxy._clean_pac_url(theirs) != theirs:
+            raise AssertionError("a real PAC URL was discarded: %s" % theirs)
+        # The proxy must serve the path sysproxy filters on, or that filter
+        # silently stops matching.
+        from config import MODE_ALL
+        import dnsq
+        from macos.proxy import DesyncProxy
+        px = DesyncProxy(dnsq.DohResolver(), log=lambda m: None)
+        px.port = 8080
+        if px.pac_url() != ours:
+            raise AssertionError("pac_url %r does not match PAC_FILENAME"
+                                 % px.pac_url())
+    check("no (null) PAC URL is restored", null_pac_url)
+
+    # 6c. A pre-environment-variable journal must still be readable: it is the
+    #     only record of what the user's proxy settings were before us, and
+    #     upgrading them into a state that cannot be undone is unacceptable.
+    def legacy_journal():
+        from macos import sysproxy
+        legacy = {"Wi-Fi": {"auto": {"url": "", "enabled": False}}}
+        services, env = sysproxy._split_journal(legacy)
+        if services != legacy or env != {}:
+            raise AssertionError("legacy journal misread: %r / %r" % (services, env))
+        current = {"services": legacy, "env": {"HTTPS_PROXY": "http://x"}}
+        services, env = sysproxy._split_journal(current)
+        if services != legacy or env != {"HTTPS_PROXY": "http://x"}:
+            raise AssertionError("current journal misread: %r / %r" % (services, env))
+        if sysproxy._split_journal(None) != ({}, {}):
+            raise AssertionError("a missing journal must read as empty")
+    check("journal layouts", legacy_journal)
+
+    # 6d. Every variable published to the session must have a matching restore,
+    #     or a run that ends leaves software pointed at a listener that is gone.
+    def env_vars_symmetric():
+        from macos import sysproxy
+        published = set(sysproxy._ENV_PROXY_VARS) | set(sysproxy._ENV_NO_PROXY_VARS)
+        if published != set(sysproxy._ENV_VARS):
+            raise AssertionError("restore does not cover every published var")
+        for name in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+            if name not in sysproxy._ENV_PROXY_VARS:
+                raise AssertionError("%s is not published; reqwest/curl need it"
+                                     % name)
+    check("environment proxy symmetry", env_vars_symmetric)
+
     # 7. State must land in the user's Library, never under /var/root.
     def state():
         import os

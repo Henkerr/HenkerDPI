@@ -25,6 +25,11 @@ from config import STATE_DIR
 
 JOURNAL_FILE = os.path.join(STATE_DIR, "sysproxy_backup.json")
 
+# The path DesyncProxy serves its PAC on. It lives here rather than in proxy.py
+# because _clean_pac_url has to recognise our own URL to keep it out of the
+# journal, and the two drifting apart would silently break that.
+PAC_FILENAME = "henkerdpi.pac"
+
 # Traffic that must never be sent to the proxy: loopback, link-local, and the
 # .local names Bonjour resolves. Routing those through a userspace hop breaks
 # printer discovery and captive portals for no benefit.
@@ -91,6 +96,30 @@ def _parse_bypass(text: str) -> list:
     return domains
 
 
+def _clean_pac_url(value) -> str:
+    """A PAC URL worth restoring, or "" for a service that has none of its own.
+
+    Two things are filtered out. networksetup reports "no URL" as the literal
+    string "(null)"; kept verbatim it is truthy, so the restore would run
+    `-setautoproxyurl <svc> '(null)'` and write that string into the user's
+    System Settings for good. And a URL of OURS is not the user's setting at
+    all: networksetup cannot unset a PAC URL, only switch it off, so every clean
+    restore leaves the last run's URL visible on each service — snapshotting it
+    the next time round would launder HenkerDPI's own leftover into the record
+    of what the user had, and carry it forward through every restore after that.
+
+    Applied on the way in AND on the way out, because journals written by the
+    earlier build already contain "(null)" and those are the ones a restore has
+    to heal.
+    """
+    text = (value or "").strip()
+    if text in ("", "(null)"):
+        return ""
+    if PAC_FILENAME in text and "127.0.0.1" in text:
+        return ""
+    return text
+
+
 def read_state(service: str) -> dict:
     state = {}
     for key, flag in _GETTERS.items():
@@ -105,7 +134,7 @@ def read_state(service: str) -> dict:
                           service]).stdout.splitlines():
             key, _, value = line.partition(":")
             fields[key.strip().lower()] = value.strip()
-        state["auto"] = {"url": fields.get("url", ""),
+        state["auto"] = {"url": _clean_pac_url(fields.get("url", "")),
                          "enabled": fields.get("enabled", "No").lower() == "yes"}
     except (OSError, subprocess.SubprocessError):
         state["auto"] = {"url": "", "enabled": False}
@@ -135,6 +164,21 @@ def _read_journal():
         return data if isinstance(data, dict) else None
     except (OSError, ValueError):
         return None
+
+
+def _split_journal(data) -> tuple:
+    """(per-service state, environment state) from either journal layout.
+
+    Builds before the environment-variable path wrote a flat {service: state}
+    map, and one of those can be sitting on disk from a version the user is
+    upgrading from. It still has to be readable: that file is the only record of
+    what their proxy settings were before HenkerDPI touched them.
+    """
+    if not isinstance(data, dict):
+        return {}, {}
+    if "services" in data:
+        return (data.get("services") or {}), (data.get("env") or {})
+    return data, {}
 
 
 def clear_journal() -> None:
@@ -170,7 +214,7 @@ def _restore_script(saved: dict) -> str:
     for svc, state in saved.items():
         q = shlex.quote(svc)
         auto = state.get("auto") or {}
-        url = auto.get("url", "")
+        url = _clean_pac_url(auto.get("url", ""))
         if url:
             lines.append("networksetup -setautoproxyurl %s %s"
                          % (q, shlex.quote(url)))
@@ -223,6 +267,77 @@ def _disable_script(services) -> str:
     return "\n".join(lines)
 
 
+# === Environment-variable proxy, for software that does not read the PAC ===
+#
+# A PAC only reaches programs that implement PAC. Discord's updater does not: it
+# is a Rust binary using reqwest/hyper, and reqwest's macOS system-proxy support
+# reads the FIXED http/https keys only. With a PAC alone published it sees no
+# proxy, connects directly, and the DPI resets the handshake — measured on a
+# Turkish line as `hyper::Error(Connect, code: -9806 "connection closed via
+# error")` retrying every 30s, which leaves Discord stuck on its update screen
+# for good. The app never gets to run, on the one service this tool exists for.
+#
+# The obvious repair — also publishing a fixed proxy through networksetup — is
+# the wrong one. Chromium reads the PAC and the fixed rules into a single config
+# and falls back to the fixed rules when the PAC cannot be fetched, so a
+# HenkerDPI that died would take every browser down with
+# ERR_PROXY_CONNECTION_FAILED. That is precisely the failure the PAC was chosen
+# to rule out, and it must not be traded away.
+#
+# launchctl's session environment reaches the same programs without appearing in
+# any browser's proxy configuration: reqwest, Go's net/http, curl, git and npm
+# all read these variables, while Chromium and CFNetwork ignore them on macOS.
+# It needs no privileges, and unlike a system proxy setting it does not survive
+# a logout — so the worst a force-kill can leave behind heals itself at the next
+# login, on top of the journal replay at the next start.
+#
+# What is still not covered: software that reads neither the PAC nor the
+# environment. Nothing available to an unprivileged process on macOS reaches it.
+_ENV_PROXY_VARS = ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy",
+                   "ALL_PROXY", "all_proxy")
+_ENV_NO_PROXY_VARS = ("NO_PROXY", "no_proxy")
+_ENV_VARS = _ENV_PROXY_VARS + _ENV_NO_PROXY_VARS
+# Loopback and link-local stay off the proxy for the same reason the PAC keeps
+# them off: routing them through a userspace hop breaks discovery and buys
+# nothing.
+_ENV_NO_PROXY = "localhost,127.0.0.1,::1,*.local,169.254.0.0/16"
+
+
+def _launchctl(*args) -> tuple:
+    try:
+        done = _run(["launchctl"] + list(args), timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return False, ""
+    return done.returncode == 0, (done.stdout or "").strip()
+
+
+def env_snapshot() -> dict:
+    """Whatever these variables held before we touched them."""
+    out = {}
+    for name in _ENV_VARS:
+        ok, value = _launchctl("getenv", name)
+        out[name] = value if ok else ""
+    return out
+
+
+def apply_env(proxy_url: str) -> None:
+    """Publish the proxy to the login session. Best effort; never raises."""
+    for name in _ENV_PROXY_VARS:
+        _launchctl("setenv", name, proxy_url)
+    for name in _ENV_NO_PROXY_VARS:
+        _launchctl("setenv", name, _ENV_NO_PROXY)
+
+
+def restore_env(saved: dict) -> None:
+    """Put the variables back. No recorded original means unset, not empty."""
+    for name in _ENV_VARS:
+        previous = (saved or {}).get(name) or ""
+        if previous:
+            _launchctl("setenv", name, previous)
+        else:
+            _launchctl("unsetenv", name)
+
+
 def run_privileged(script: str, prompt: str) -> tuple:
     """Run a shell script as root, asking the user once via the macOS dialog.
 
@@ -265,9 +380,13 @@ class SystemProxy:
         saved = _read_journal()
         if not saved:
             return False
+        services_saved, env_saved = _split_journal(saved)
         self._log("[*] Onceki oturumdan kalan proxy ayari geri aliniyor")
+        # Unprivileged and cannot be refused, so it happens before the dialog:
+        # a cancelled password prompt must still take the stale variables down.
+        restore_env(env_saved)
         ok, err = run_privileged(
-            _restore_script(saved),
+            _restore_script(services_saved),
             "HenkerDPI needs to restore your previous proxy settings.")
         if ok:
             clear_journal()
@@ -276,7 +395,7 @@ class SystemProxy:
             self._log("[!] Geri alma basarisiz: %s" % err)
         return ok
 
-    def apply(self, pac_url: str) -> bool:
+    def apply(self, pac_url: str, proxy_url: str = "") -> bool:
         services = list_services()
         if not services:
             self._log("[!] Ag servisi bulunamadi")
@@ -296,7 +415,8 @@ class SystemProxy:
         wrote_journal = False
         if not self.active and not _read_journal():
             try:
-                _write_journal(snapshot())
+                _write_journal({"services": snapshot(),
+                                "env": env_snapshot()})
             except OSError as e:
                 self._log("[!] Yedek yazilamadi, degisiklik yapilmadi: %s" % e)
                 return False
@@ -313,6 +433,13 @@ class SystemProxy:
                       % ("izin verilmedi" if err == "cancelled" else err))
             return False
 
+        # Only once the system settings are really ours, and only outward: the
+        # variables are what carries the bypass to software that ignores the
+        # PAC. Best effort — the PAC alone still covers every browser, so a
+        # launchctl that refuses is not a reason to fail the whole start.
+        if proxy_url:
+            apply_env(proxy_url)
+
         self.active = True
         self._log("[*] Sistem proxy'si acildi: %s (%s)"
                   % (pac_url, ", ".join(services)))
@@ -323,8 +450,14 @@ class SystemProxy:
             # Even so, a journal may exist from a crash earlier in this run.
             return self.restore_from_journal()
         saved = _read_journal()
-        if saved:
-            script = _restore_script(saved)
+        services_saved, env_saved = _split_journal(saved)
+        # First, and whatever happens next: taking the variables down needs no
+        # privileges and cannot be refused, so it survives a cancelled password
+        # dialog. Leaving them pointed at a listener that is going away is what
+        # would break git, npm and Discord in every session started afterwards.
+        restore_env(env_saved)
+        if services_saved:
+            script = _restore_script(services_saved)
         else:
             # The journal is gone or unreadable, so there is nothing to restore
             # TO — but our PAC is still registered on every service and must

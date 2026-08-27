@@ -1,8 +1,8 @@
 #!/bin/bash
 # HenkerDPI — restore your network settings by hand.
 #
-# You should never need this. HenkerDPI puts the proxy setting back when it
-# quits, and because it registers a PAC file rather than a fixed proxy, macOS
+# You should never need this. HenkerDPI puts everything back when it quits, and
+# because it registers a PAC file rather than a fixed proxy, every browser
 # already falls back to a direct connection whenever the app is not running.
 #
 # It ships anyway, because "my internet is broken and I do not know why" is the
@@ -37,6 +37,16 @@ while IFS= read -r svc; do
   sudo networksetup -setproxybypassdomains "$svc" "*.local" "169.254/16" \
     2>/dev/null
 done <<< "$services"
+
+# The login session's proxy variables, too. HenkerDPI publishes the proxy there
+# as well, because software that reads neither the PAC nor macOS' proxy settings
+# -- Discord's updater among them -- would otherwise get no bypass at all. These
+# never survive a logout, so a restart would clear them anyway; this saves you
+# the restart. No sudo needed: they belong to your own session.
+for var in HTTP_PROXY http_proxy HTTPS_PROXY https_proxy \
+           ALL_PROXY all_proxy NO_PROXY no_proxy; do
+  launchctl unsetenv "$var" 2>/dev/null
+done
 
 # Remove the leftover pf rules, if a build that used them ever ran. Harmless
 # when there are none. Flushing leaves an empty anchor behind on Ventura and

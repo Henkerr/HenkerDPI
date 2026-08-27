@@ -9,22 +9,24 @@ each one publishes the SHA-256 of its assets.
 
 ## Unreleased
 
-macOS is supported again, as a real build rather than an experiment.
+Windows engine, UI and release-pipeline work done after 2.8.0 was cut. Not yet
+tagged; the next Windows release must be tagged above v2.8.1 and built from this.
 
 ### Added
-- **macOS 11+ on Apple Silicon and Intel.** It is not the Windows engine recompiled. macOS has no
-  WinDivert and its `pf` is a fork of OpenBSD pf 4.1 with no `divert-to`, so there is nothing to
-  intercept an outbound ClientHello with. The Mac build instead runs a desync proxy on `127.0.0.1`
-  and registers it with macOS as a proxy auto-config (PAC) URL, reshaping each TLS handshake as it
-  forwards it. Traffic still never leaves the machine for anyone else's server.
-- A PAC rather than a fixed proxy setting, deliberately: macOS treats an unreachable PAC as "no
-  proxy", so a crash costs the bypass and nothing else. Every `PROXY` decision the PAC returns also
-  carries a `DIRECT` fallback, which covers the case a browser has already cached the PAC body and
-  the listener behind it is gone.
-- `.github/workflows/build-macos.yml` builds and attaches an arm64 and an x86_64 DMG on a real
-  macOS runner, since the bundle cannot be cross-built from Windows.
-- Recovery script shipped in the DMG (`Ag Ayarlarini Geri Yukle.command`) that clears every proxy
-  mechanism per network service, for the case the app never got to undo its own change.
+- **A clickable Windows notification when an update is waiting.** The update
+  banner only existed inside the window, so a copy launched by the boot task and
+  left in the tray never told the user. A real notification is raised now and
+  clicking it installs the update.
+- **Automated Windows build (`.github/workflows/build-windows.yml`).** Builds the
+  onefile exe on a Windows runner and attaches `HenkerDPI.exe` + its SHA-256 to
+  the release on a tag, so the self-updater finally has an asset to find — until
+  now only the macOS DMGs were ever published.
+- **On-demand WebView UI (first slice).** An always-on engine/tray core with the
+  window as a separate WebView process, so no browser engine is resident while
+  the app sits in the tray. Console theme wired end-to-end with a live, flowing
+  event log and working Bypass/Engel filters.
+- The live log now records QUIC refusals as an "engel" event, so the engine's
+  QUIC→TCP downgrades are visible rather than silent.
 
 ### Fixed
 - **Windows: a wired→phone-hotspot switch stopped bypassing blocked sites, and restarting did not
@@ -57,6 +59,67 @@ macOS is supported again, as a real build rather than an experiment.
     then reaches the server as a valid ClientHello, and *every* HTTPS site breaks. The fallback is
     now the NAT-safe `badseq`/`record`: its decoy sits outside the receive window, so the server
     always drops it and no handshake is ever poisoned.
+
+- **The build's version drifted out of sync.** `config.APP_VERSION` is what the
+  updater compares against the latest release, but it lived in three hand-synced
+  places (config.py, version_info.txt, setup.iss) and had fallen behind the
+  shipped exe, so the updater judged releases against a version nobody was
+  running. A test now fails the build when the three disagree.
+
+## 2.8.0 — 2026-08-09
+
+macOS is supported again, as a real build rather than an experiment.
+
+### Added
+- **macOS 11+ on Apple Silicon and Intel.** It is not the Windows engine recompiled. macOS has no
+  WinDivert and its `pf` is a fork of OpenBSD pf 4.1 with no `divert-to`, so there is nothing to
+  intercept an outbound ClientHello with. The Mac build instead runs a desync proxy on `127.0.0.1`
+  and registers it with macOS as a proxy auto-config (PAC) URL, reshaping each TLS handshake as it
+  forwards it. Traffic still never leaves the machine for anyone else's server.
+- A PAC rather than a fixed proxy setting, deliberately: macOS treats an unreachable PAC as "no
+  proxy", so a crash costs the bypass and nothing else. Every `PROXY` decision the PAC returns also
+  carries a `DIRECT` fallback, which covers the case a browser has already cached the PAC body and
+  the listener behind it is gone.
+- `.github/workflows/build-macos.yml` builds and attaches an arm64 and an x86_64 DMG on a real
+  macOS runner, since the bundle cannot be cross-built from Windows.
+- Recovery script shipped in the DMG (`Ag Ayarlarini Geri Yukle.command`) that clears every proxy
+  mechanism per network service, for the case the app never got to undo its own change.
+- **The proxy is published to the login session's environment as well as the PAC.** A PAC only
+  reaches software that implements PAC, and Discord's updater does not: it is a Rust binary whose
+  HTTP client reads the *fixed* proxy keys only. Measured on a Turkish line, it saw no proxy at all,
+  connected directly, and the DPI reset every handshake — `hyper::Error(Connect, code: -9806)` every
+  30 seconds — so Discord never got past its update screen on the one service this tool exists for.
+  Setting the fixed system proxy instead would have fixed that and broken something worse: Chromium
+  reads the PAC and the fixed rules into one config and falls back to the fixed rules when the PAC
+  cannot be fetched, so a HenkerDPI that died would take every browser down with
+  `ERR_PROXY_CONNECTION_FAILED` — exactly the failure the PAC was chosen to rule out. The session
+  environment reaches the same programs (reqwest, Go, curl, git, npm) while Chromium and CFNetwork
+  ignore it, needs no privileges, and does not survive a logout, so the worst a force-kill can leave
+  behind expires by itself. Software that reads neither the PAC nor the environment is still not
+  covered; nothing available to an unprivileged process on macOS reaches it.
+
+- **A menu-bar item, and a login item.** Closing the window no longer quits the app on a Mac: it
+  leaves an icon in the menu bar, left-click to bring the window back, right-click for start/stop and
+  quit. The window is only ever hidden once that icon actually exists — withdrawing it without one
+  would leave the app running, invisible, with the single-instance lock refusing a relaunch. Clicking
+  the Dock icon restores it too. Start-at-login installs a LaunchAgent in the user's own directory
+  and needs no privileges; a separate switch decides whether it also turns the bypass on, off by
+  default because that step needs an administrator prompt and one that appears by itself at every
+  login is worse than one click.
+- The macOS build now ships the same Tcl/Tk the app is developed against. CI used to build against
+  Tk 8.6, whose aqua port has no `tk systray` at all, so the menu-bar item would have worked in
+  development and been silently missing from every DMG. The workflow fails the build if the version
+  ever drops back.
+
+### Fixed
+- The menu-bar icon was scaled with Tk's `subsample`, which is nearest-neighbour: from 512 to 22 it
+  keeps one pixel in 23 and discards the rest, turning a detailed mark into noise at exactly the size
+  where detail is all there is. It is resampled properly now.
+- The app icon is still mastered at 512 px while macOS' iconset table asks for 1024, so the build
+  enlarges it and a Retina Mac shows it slightly soft in the Dock and in Finder. Sharpening it needs
+  the original artwork at a higher resolution: `tools/make_wolf_mark.py` is an unused alternative
+  mark — its own docstring says so — and regenerating from it replaces the logo rather than sharpens
+  it.
 - **Re-applying the proxy overwrote the record of the user's original settings.** Switching mode or
   toggling a category re-applies while the engine is running, and the snapshot taken at that moment
   reads back HenkerDPI's own PAC. It was then written down as what to restore to, so quitting
@@ -68,6 +131,22 @@ macOS is supported again, as a real build rather than an experiment.
 - Quitting could skip the restore entirely. Cleanup ran under a non-blocking lock, so the exit
   handler returned immediately while the engine thread was still inside the password prompt, and
   interpreter shutdown then froze that thread mid-restore.
+- **Cmd-Q and Dock ▸ Quit skipped the restore.** Tk turns the Quit Apple Event straight into
+  `Tcl_Exit` unless `::tk::mac::Quit` is defined, so neither ever reached `_quit()` or the
+  engine-thread join behind it — the two most natural ways to close a Mac app were the two that left
+  it pointed at a proxy that was gone.
+- **`(null)` was written into System Settings as a PAC URL.** `networksetup -getautoproxyurl`
+  reports a service with no URL as the literal string `(null)`, which is truthy, so the restore ran
+  `-setautoproxyurl <service> '(null)'` and left that permanently visible in the user's network
+  settings. Cleaned on the way in and on the way out, because journals written by the earlier build
+  already contain it and those are the ones a restore has to heal.
+- The tray is switched off on macOS rather than left to chance. pystray drives an `NSStatusItem`,
+  AppKit allows that only from the main thread, and tkinter's event loop owns it — so on a
+  from-source install that happened to have pystray, closing the window withdrew it and left the
+  user no way to get it back. It is no longer a dependency there either.
+- `pip install -r requirements.txt` could not complete on macOS: `pydivert` ships the Windows packet
+  driver and is unconditional. It and `pystray` now carry `sys_platform == "win32"` markers, so the
+  documented from-source path works on both platforms.
 
 ### Changed
 - The updater tells a Mac about a new version and opens the release page instead of installing it.

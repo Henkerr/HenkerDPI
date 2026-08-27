@@ -18,7 +18,7 @@ import time
 
 from config import MODE_ALL
 from sni import should_bypass_fast
-from . import desync
+from . import desync, sysproxy
 
 # A browser opening a page fans out to dozens of connections; the cap is high
 # enough not to be felt and low enough that a runaway client cannot exhaust the
@@ -303,7 +303,16 @@ class DesyncProxy:
         return "PROXY 127.0.0.1:%d; DIRECT" % (self.port or 0)
 
     def pac_url(self) -> str:
-        return "http://127.0.0.1:%d/henkerdpi.pac" % (self.port or 0)
+        return "http://127.0.0.1:%d/%s" % (self.port or 0,
+                                           sysproxy.PAC_FILENAME)
+
+    def proxy_url(self) -> str:
+        """The listener itself, for clients that cannot be handed a PAC.
+
+        Same port: the front door tells HTTP CONNECT, SOCKS5 and a PAC fetch
+        apart by their first byte, so there is nothing extra to run.
+        """
+        return "http://127.0.0.1:%d" % (self.port or 0)
 
     def _forward_plain_http(self, client, head, target):
         """Relay an absolute-URI request, rewritten to origin form."""

@@ -3,7 +3,9 @@
 gui.py talks to this through start()/stop()/reload_settings()/stats/running, so
 the interface has to match the Windows engine even though nothing underneath it
 does. What it actually runs is a local proxy, a per-network measurement of how
-to reshape the handshake, and one privileged call to point macOS at the proxy.
+to reshape the handshake, one privileged call to point macOS at the proxy, and
+one unprivileged call publishing it to the login session's environment for the
+software that ignores macOS' proxy settings entirely (see macos/sysproxy.py).
 
 Deliberately absent, and not oversights:
 
@@ -80,7 +82,8 @@ class BypassEngine:
         # The PAC encodes the mode and the domain list, so a mode change has to
         # be re-published or the browser keeps sending the old set of hosts.
         if self._proxy is not None and self._sysproxy.active:
-            self._sysproxy.apply(self._proxy.pac_url())
+            self._sysproxy.apply(self._proxy.pac_url(),
+                                 self._proxy.proxy_url())
 
     # -- lifecycle ---------------------------------------------------------
     def start(self):
@@ -109,7 +112,8 @@ class BypassEngine:
             # cache lives.
             self._apply_strategy()
 
-            if not self._sysproxy.apply(self._proxy.pac_url()):
+            if not self._sysproxy.apply(self._proxy.pac_url(),
+                                        self._proxy.proxy_url()):
                 self._log("[!] Sistem proxy'si ayarlanamadi — motor durduruluyor")
                 return
 
@@ -146,9 +150,16 @@ class BypassEngine:
         self._stop_event.set()
 
     def _install_signal_handlers(self):
-        """Restore on a polite kill. SIGKILL cannot be caught — that case is
-        covered by the journal replay at the next start, and by the PAC's own
-        failure mode, which is to send everything DIRECT."""
+        """Restore on a polite kill, when we are the ones who can.
+
+        Only ever succeeds for a headless run: signal.signal refuses to register
+        from anything but the main thread, and the GUI calls start() on a worker
+        — so under gui.py this is a no-op and the except below swallows it. That
+        is survivable rather than broken. Cmd-Q and the window button go through
+        _quit(), a SIGKILL cannot be caught by anyone, and both leftovers heal:
+        the journal is replayed at the next start, and the session's proxy
+        variables do not outlive the login.
+        """
         def handler(signum, _frame):
             self._stop_event.set()
             self._cleanup()

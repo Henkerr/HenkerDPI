@@ -2,7 +2,13 @@
 # validated against. pydivert 3.1.0 bundles WinDivert 2.2.2 — the packet-driver
 # layer the reliability-critical filter/fragmentation/QUIC code is tuned for, so
 # it must not float. Build tooling is in requirements-build.txt.
-pydivert==3.1.0
+#
+# The two Windows-only entries carry environment markers so that the documented
+# `pip install -r requirements.txt` also works on macOS, where the engine is a
+# userspace proxy: pydivert ships the WinDivert driver and cannot install at
+# all, and pystray would only arrive to be ignored (gui.py disables the tray on
+# macOS — AppKit refuses an NSStatusItem off the main thread, which tkinter owns).
+pydivert==3.1.0; sys_platform == "win32"
 customtkinter==5.2.2
 Pillow==12.2.0
-pystray==0.19.5
+pystray==0.19.5; sys_platform == "win32"

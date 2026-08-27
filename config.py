@@ -11,7 +11,7 @@ import sys
 # Single source of truth for the running build's version. Keep in sync with
 # version_info.txt (FileVersion) and setup.iss (AppVersion) when releasing —
 # updater.py compares this against the latest GitHub release tag.
-APP_VERSION = "2.7.3"
+APP_VERSION = "2.8.0"
 
 # Repository the updater queries. Both are validated at download time so a
 # tampered API response cannot point the downloader at an arbitrary host.
@@ -36,12 +36,13 @@ else:
 def resolve_home() -> str:
     """The invoking user's home, even when the process was elevated.
 
-    The macOS build needs root for pfctl, so it is started through sudo or
-    osascript. Both leave HOME pointing at /var/root, which would scatter
-    settings, the autotune cache and the language choice somewhere the user
-    cannot see and cannot keep — every elevated run would look like a fresh
-    install. SUDO_USER names who actually asked, so prefer their home and only
-    fall back to expanduser when we were not elevated.
+    The macOS app does not run as root — only the networksetup batch inside
+    macos/sysproxy.run_privileged does — but nothing stops someone starting it
+    with `sudo python gui.py`, and sudo leaves HOME pointing at /var/root. That
+    would scatter settings, the autotune cache and the language choice somewhere
+    the user cannot see and cannot keep, so every elevated run would look like a
+    fresh install. SUDO_USER names who actually asked, so prefer their home and
+    only fall back to expanduser when we were not elevated.
     """
     user = os.environ.get("SUDO_USER")
     if user and user != "root":
@@ -65,9 +66,8 @@ def state_dir() -> str:
     Folder Access. Each platform's per-user location is the right home for both;
     fall back to the app dir only if it cannot be created.
 
-    macOS matters twice over here: the app is launched with sudo/osascript for
-    pfctl, so $HOME would otherwise become /var/root and the user's settings
-    would vanish the moment the engine starts. resolve_home() undoes that.
+    resolve_home() rather than expanduser, so that starting the app under sudo
+    cannot land the user's settings under /var/root where they cannot find them.
     """
     if sys.platform == "darwin":
         base = os.path.join(resolve_home(), "Library", "Application Support")
@@ -300,6 +300,13 @@ def _default_settings():
         # Ask GitHub once a day whether a newer release exists. Set False to
         # stop the app making any outbound request of its own.
         "update_check_enabled": True,
+        # Should the login item turn the bypass on, or only open the app?
+        # macOS only, and OFF by default on purpose: switching the bypass on
+        # needs an administrator prompt, and one that appears by itself at
+        # every login — before the user has done anything — is worse than one
+        # click. Windows has no such choice to make; its scheduled task runs
+        # elevated and silently, so it always starts the engine.
+        "autostart_engine": False,
     }
 
 
