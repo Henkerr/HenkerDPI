@@ -1,0 +1,87 @@
+name: Build Windows
+
+# The self-updater downloads the asset named exactly "HenkerDPI.exe" from the
+# latest GitHub release (see config.RELEASE_ASSET_NAME) and verifies it against
+# the sha256 digest GitHub computes for the asset. Until this workflow existed,
+# releases carried only the macOS DMGs, so a Windows client's update check found
+# no matching asset and never offered an update at all. This builds the onefile
+# exe on a real Windows runner and attaches it when a tag is pushed, which is
+# what turns the update path on.
+on:
+  push:
+    # macos-support is the active integration branch (master is far behind); drop
+    # it here once this work is merged to master.
+    branches: [master, macos-support]
+    tags: ['v*']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Match the toolchain the shipped 2.7.3 build was validated on. pydivert
+          # 3.1.0 is pinned in requirements.txt and known-good on 3.10; do not
+          # bump this casually — the packet layer is version-sensitive.
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Runtime deps + the build toolchain. pyinstaller-hooks-contrib in
+          # requirements-build.txt is what bundles WinDivert64.dll/.sys into the
+          # onefile exe — without it the build silently ships without the driver.
+          pip install -r requirements.txt -r requirements-build.txt
+
+      - name: Verify the tuner logic, version sync and notification hook
+        # test_autotune.py is the build gate: it catches the key_share regression
+        # live, asserts config/version_info/setup.iss agree, and checks the
+        # Windows notification hook still wraps pystray. A red test must stop the
+        # release, so this runs before the exe is built.
+        run: python test_autotune.py
+
+      - name: Build the exe
+        run: python -m PyInstaller HenkerDPI.spec --clean -y
+
+      - name: Check the artifact exists
+        shell: pwsh
+        run: |
+          $exe = "dist/HenkerDPI.exe"
+          if (-not (Test-Path $exe)) { throw "PyInstaller produced no $exe" }
+          $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+          Write-Host "Built $exe ($mb MB)"
+          # A onefile build that lost the bundled driver/deps collapses well below
+          # the real ~25-30 MB; fail loudly rather than shipping a broken exe.
+          if ((Get-Item $exe).Length -lt 10MB) { throw "exe is implausibly small ($mb MB)" }
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $h = (Get-FileHash dist/HenkerDPI.exe -Algorithm SHA256).Hash.ToLower()
+          "$h  HenkerDPI.exe" | Set-Content -NoNewline -Encoding ascii dist/HenkerDPI.exe.sha256
+          Write-Host "sha256: $h"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HenkerDPI-windows
+          path: |
+            dist/HenkerDPI.exe
+            dist/HenkerDPI.exe.sha256
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          # The asset name must stay exactly HenkerDPI.exe: the updater matches on
+          # it. GitHub computes the sha256 digest the updater verifies against.
+          files: |
+            dist/HenkerDPI.exe
+            dist/HenkerDPI.exe.sha256
