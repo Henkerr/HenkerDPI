@@ -27,3 +27,7 @@ logo/_*
 tools/wolf_mark.png
 tools/wolf_mark.ico
 tools/wolf_mark_sizes.png
+
+# macOS Finder junk
+.DS_Store
+._*

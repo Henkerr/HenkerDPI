@@ -7,10 +7,10 @@ each one publishes the SHA-256 of its assets.
 
 ---
 
-## Unreleased
+## 2.9.0 — 2026-08-28
 
-Windows engine, UI and release-pipeline work done after 2.8.0 was cut. Not yet
-tagged; the next Windows release must be tagged above v2.8.1 and built from this.
+Reliability and the update pipeline. The shipping app is still the Windows
+desktop (Tk) build; the WebView UI listed under groundwork is not yet packaged.
 
 ### Added
 - **A clickable Windows notification when an update is waiting.** The update
@@ -21,12 +21,14 @@ tagged; the next Windows release must be tagged above v2.8.1 and built from this
   onefile exe on a Windows runner and attaches `HenkerDPI.exe` + its SHA-256 to
   the release on a tag, so the self-updater finally has an asset to find — until
   now only the macOS DMGs were ever published.
+
+### Groundwork (not yet user-facing)
 - **On-demand WebView UI (first slice).** An always-on engine/tray core with the
   window as a separate WebView process, so no browser engine is resident while
   the app sits in the tray. Console theme wired end-to-end with a live, flowing
-  event log and working Bypass/Engel filters.
-- The live log now records QUIC refusals as an "engel" event, so the engine's
-  QUIC→TCP downgrades are visible rather than silent.
+  event log and working Bypass/Engel filters — not yet packaged into a build.
+- The engine now records QUIC refusals as an "engel" event for that live log, so
+  its QUIC→TCP downgrades are visible rather than silent.
 
 ### Fixed
 - **Windows: a wired→phone-hotspot switch stopped bypassing blocked sites, and restarting did not
