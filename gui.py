@@ -39,7 +39,7 @@ from config import (
 import updater
 
 try:
-    from PIL import Image, ImageDraw, ImageTk, ImageFilter
+    from PIL import Image, ImageDraw, ImageTk, ImageFilter, ImageChops
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
@@ -259,19 +259,30 @@ def _make_power_button(size, active, hover=0.0, theme_key="phantom"):
         icon_col = _lerp_color((*icon_base, 225), (255, 255, 255, 255), hover)
         inner_col = _lerp_color((*inner_dim, 255), (*inner_dim_hover, 255), hover)
 
-    # Hero glow: a big soft ambient bloom PLUS a tighter bright core, so the
-    # card fills with light rather than showing a thin ring. OFF at rest keeps a
-    # faint halo; the bloom swells with the pulse/hover for a living light.
+    # Hero glow: a big soft ambient bloom PLUS a tighter bright core, so the card
+    # fills with light rather than showing a thin ring. OFF at rest keeps a faint
+    # halo; the bloom swells with the pulse/hover for a living light. It is kept
+    # well inside the frame and then masked with a radial falloff, because the
+    # power button is a tk.Label with no alpha: any glow that survives to the
+    # square image edge paints on the card as a pulsing BOX, not a soft halo.
     glow = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
-    amb_r = int(s * (0.44 + 0.07 * hover))
+    amb_r = int(s * (0.30 + 0.05 * hover))
     amb_a = int(glow_col[3] * 0.5)
     gd.ellipse([cx - amb_r, cy - amb_r, cx + amb_r, cy + amb_r],
                fill=(glow_col[0], glow_col[1], glow_col[2], amb_a))
-    core_r = int(s * (0.32 + 0.06 * hover))
+    core_r = int(s * (0.26 + 0.05 * hover))
     gd.ellipse([cx - core_r, cy - core_r, cx + core_r, cy + core_r], fill=glow_col)
-    blur_r = max(1, int(s * 0.10))
+    blur_r = max(1, int(s * 0.075))
     glow = glow.filter(ImageFilter.GaussianBlur(radius=blur_r))
+    # Radial vignette: drive the bloom to zero before the image edge so no square
+    # halo can reach the label's opaque card background.
+    vg = Image.new("L", (s, s), 0)
+    ImageDraw.Draw(vg).ellipse(
+        [cx - int(s * 0.46), cy - int(s * 0.46),
+         cx + int(s * 0.46), cy + int(s * 0.46)], fill=255)
+    vg = vg.filter(ImageFilter.GaussianBlur(radius=int(s * 0.05)))
+    glow.putalpha(ImageChops.multiply(glow.getchannel("A"), vg))
     img = Image.alpha_composite(img, glow)
     draw = ImageDraw.Draw(img)
 
