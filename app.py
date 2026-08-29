@@ -172,8 +172,14 @@ def show_ui():
     if _ui_proc and _ui_proc.poll() is None:
         return  # TODO: signal the running ui.py to focus its window
     creationflags = 0x08000000 if os.name == "nt" else 0   # CREATE_NO_WINDOW
-    _ui_proc = subprocess.Popen([sys.executable, UI_SCRIPT], cwd=HERE,
-                                creationflags=creationflags)
+    # Frozen: there is no ui.py on disk to hand the interpreter — re-launch this
+    # very exe with --ui so its main() runs the window instead of the core. In a
+    # source checkout, run ui.py directly.
+    if getattr(sys, "frozen", False):
+        args = [sys.executable, "--ui"]
+    else:
+        args = [sys.executable, UI_SCRIPT]
+    _ui_proc = subprocess.Popen(args, cwd=HERE, creationflags=creationflags)
 
 
 def _tray_image():
@@ -226,6 +232,15 @@ def ensure_admin():
 
 
 def main():
+    # Frozen re-launch as the window process: the core spawns this exe with --ui
+    # (there is no ui.py on disk in a onefile build). The window talks to the
+    # core over IPC and needs no admin of its own, so this runs before
+    # ensure_admin and never touches the single-instance mutex.
+    if "--ui" in sys.argv:
+        import ui
+        ui.main()
+        return
+
     ensure_admin()
     if os.name == "nt":
         ctypes.windll.kernel32.CreateMutexW(None, True, "Global\\HenkerDPI_SingleInstance")
