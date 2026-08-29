@@ -108,6 +108,45 @@ def resolve_pref(filename: str) -> str:
     return new
 
 
+def sweep_stale_mei() -> int:
+    """Remove HenkerDPI's leftover PyInstaller onefile temp folders.
+
+    A onefile exe unpacks to %TEMP%\\_MEInnnnnn on every launch and deletes it on
+    a clean exit. HenkerDPI often does not exit cleanly — the updater and the
+    installer taskkill it, and the WinDivert driver holds its bundled .sys locked
+    — so a folder is orphaned on nearly every run and they pile up (dozens of
+    folders, 100s of MB observed). Sweep them at startup: a folder is deleted only
+    if it is ONE OF OURS (a bundled signature identifies it) and NOT in use — a
+    live instance, including this one and the --ui child, keeps its folder locked,
+    so os.rename fails on it and it is skipped. No-ops in a source checkout.
+    Returns how many were removed.
+    """
+    if not getattr(sys, "frozen", False) or os.name != "nt":
+        return 0
+    import glob
+    import shutil
+    import tempfile
+    removed = 0
+    for d in glob.glob(os.path.join(tempfile.gettempdir(), "_MEI*")):
+        try:
+            if not os.path.isdir(d):
+                continue
+            if not (os.path.isdir(os.path.join(d, "pydivert"))
+                    or os.path.exists(os.path.join(d, "ui", "mevcut.html"))
+                    or os.path.exists(os.path.join(d, "icon.png"))):
+                continue                          # not ours — never touch it
+            probe = d + ".stale"
+            try:
+                os.rename(d, probe)               # locked (a live run) -> skip
+            except OSError:
+                continue
+            shutil.rmtree(probe, ignore_errors=True)
+            removed += 1
+        except Exception:
+            pass
+    return removed
+
+
 SETTINGS_FILE = resolve_pref("settings.json")
 CUSTOM_DOMAINS_FILE = resolve_pref("custom_domains.json")
 

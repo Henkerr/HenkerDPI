@@ -350,6 +350,8 @@ def main():
         pass
 
     updater.cleanup_old_version()      # delete the exe an earlier update left aside
+    # Clear the onefile temp folders past runs left behind (see sweep_stale_mei).
+    threading.Thread(target=config.sweep_stale_mei, daemon=True).start()
 
     core = Core()
     threading.Thread(target=ipc_server, args=(core,), daemon=True).start()

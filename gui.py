@@ -34,7 +34,7 @@ from lang import LANGUAGES, load_lang_pref, save_lang_pref, t
 from config import (
     load_custom_domains, save_custom_domains, load_settings, save_settings,
     CATEGORIES, DOH_PROVIDERS, MODE_ALL, MODE_SELECTIVE, resolve_pref,
-    APP_VERSION,
+    APP_VERSION, sweep_stale_mei,
 )
 import updater
 
@@ -2006,6 +2006,9 @@ def main():
         restore_dns_from_journal()
     except Exception:
         pass
+
+    # Clear the onefile temp folders past runs left behind (see sweep_stale_mei).
+    threading.Thread(target=sweep_stale_mei, daemon=True).start()
 
     app = HenkerDPIApp()
     app.mainloop()
