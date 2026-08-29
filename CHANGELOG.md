@@ -7,6 +7,30 @@ each one publishes the SHA-256 of its assets.
 
 ---
 
+## 3.0.0 — 2026-08-29
+
+A new interface: the window is now a WebView app with five selectable themes and
+live switching between them, replacing the single Tk window.
+
+### Added
+- **Five-theme WebView UI** (Mevcut, Console, Bento, Arcade, Combat). An
+  always-on engine/tray core keeps protecting while the window runs as a separate
+  WebView process, so no browser engine is resident when the app sits in the
+  tray; opening the window spawns it, closing it frees its memory. Each theme is
+  a self-contained page and switching is live.
+- The self-updater and its clickable tray notification now run in the WebView
+  core too, so a copy sitting autostarted in the tray still learns about and
+  installs a new release.
+
+### Changed
+- The shipped Windows exe is now built from the WebView app (`app.py`) rather
+  than the Tk window (`gui.py`); the Tk build stays in the tree as a fallback.
+
+### Known gaps
+- Toggling "start on boot" and a few settings controls in the new UI are not
+  wired yet. Anyone who already had autostart keeps it (the existing boot task is
+  untouched); a fresh install's toggle is a no-op until a follow-up.
+
 ## 2.9.0 — 2026-08-28
 
 Reliability and the update pipeline. The shipping app is still the Windows

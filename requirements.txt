@@ -12,3 +12,9 @@ pydivert==3.1.0; sys_platform == "win32"
 customtkinter==5.2.2
 Pillow==12.2.0
 pystray==0.19.5; sys_platform == "win32"
+# WebView UI (Windows release). pythonnet + clr-loader are what the Windows
+# WebView2 backend needs; both are win32-only. The macOS build ships the Tk UI
+# and never installs these.
+pywebview==6.1; sys_platform == "win32"
+pythonnet==3.0.5; sys_platform == "win32"
+clr-loader==0.2.10; sys_platform == "win32"

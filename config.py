@@ -11,7 +11,7 @@ import sys
 # Single source of truth for the running build's version. Keep in sync with
 # version_info.txt (FileVersion) and setup.iss (AppVersion) when releasing —
 # updater.py compares this against the latest GitHub release tag.
-APP_VERSION = "2.9.0"
+APP_VERSION = "3.0.0"
 
 # Repository the updater queries. Both are validated at download time so a
 # tampered API response cannot point the downloader at an arbitrary host.

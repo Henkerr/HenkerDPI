@@ -49,7 +49,10 @@ jobs:
         run: python test_autotune.py
 
       - name: Build the exe
-        run: python -m PyInstaller HenkerDPI.spec --clean -y
+        # The release is the WebView app (app.py): its spec outputs HenkerDPI.exe
+        # and bundles pywebview + the WebView2 DLLs. HenkerDPI.spec (the older Tk
+        # build) is kept in the tree but is no longer what ships.
+        run: python -m PyInstaller HenkerDPI-webview.spec --clean -y
 
       - name: Check the artifact exists
         shell: pwsh

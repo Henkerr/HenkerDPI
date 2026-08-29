@@ -38,7 +38,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='HenkerDPI-webview',
+    name='HenkerDPI',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

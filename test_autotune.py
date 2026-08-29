@@ -11,6 +11,7 @@ Part live (needs network, no admin), part pure-logic. Non-zero exit on any fail.
 """
 import socket
 import sys
+import time
 
 import autotune
 
@@ -159,6 +160,41 @@ if os.name == "nt":
               _delegated == [_pswin32.WM_LBUTTONUP] and not _fired)
 else:
     print("SKIP - notification hook check (not Windows)")
+
+# 6) WEBVIEW CORE UPDATE HOOK — the shipped exe is now the WebView app (app.py),
+#    so its tray-side updater is release-critical: without it, updating onto the
+#    WebView build would lose auto-update. Verify the same balloon-click wiring
+#    installs there too.
+if os.name == "nt":
+    try:
+        import pystray
+        from pystray._util import win32 as _pswin32
+
+        import app
+        import updater
+    except Exception as exc:                       # pragma: no cover
+        print("SKIP - webview update hook check (import failed: %s)" % exc)
+    else:
+        updater.can_self_update = lambda: True     # as if frozen, so the hook installs
+        updater.due_for_check = lambda force=False: False   # no real network call
+
+        class _FakeCore:
+            _update_info = object()
+            def stop(self):
+                pass
+
+        _fired6 = []
+        app._apply_update = lambda c, i: _fired6.append(1)
+        _icon6 = pystray.Icon("selftest6", None, "selftest6", pystray.Menu())
+        _before6 = _icon6._message_handlers[_pswin32.WM_NOTIFY]
+        app._wire_updates(_FakeCore(), _icon6, "tr")
+        check("webview: update wiring replaced the tray WM_NOTIFY handler",
+              _before6 is not _icon6._message_handlers[_pswin32.WM_NOTIFY])
+        _icon6._message_handlers[_pswin32.WM_NOTIFY](0, app._NIN_BALLOONUSERCLICK)
+        time.sleep(0.15)                           # _apply_update runs off-thread
+        check("webview: clicking the update notification installs", len(_fired6) == 1)
+else:
+    print("SKIP - webview update hook check (not Windows)")
 
 print()
 print("ALL PASS" if not fails else "FAILED: " + ", ".join(fails))

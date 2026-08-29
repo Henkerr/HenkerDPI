@@ -18,6 +18,7 @@ if sys.platform == "darwin":
 else:
     from main import BypassEngine, is_admin
 import config
+import updater
 try:
     from lang import t
 except Exception:
@@ -36,6 +37,7 @@ class Core:
         self.running = False
         self.started = 0.0
         self.settings = config.load_settings()
+        self._update_info = None          # set by the tray update watcher
 
     def _run(self):
         try:
@@ -219,7 +221,96 @@ def run_tray(core):
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(t("tray_quit", lang), quit_all),
     )
-    pystray.Icon("HenkerDPI", _tray_image(), "HenkerDPI", menu).run()
+    icon = pystray.Icon("HenkerDPI", _tray_image(), "HenkerDPI", menu)
+    _wire_updates(core, icon, lang)
+    icon.run()
+
+
+# Windows delivers the tray callback with this lparam when the user CLICKS a
+# notification we raised (it lands in the Action Center, so long after).
+_NIN_BALLOONUSERCLICK = 0x0400 + 5
+
+
+def _wire_updates(core, icon, lang):
+    """Check GitHub for a newer release, notify via the tray, install on click.
+
+    The always-on core is the one instance that most needs telling — it can sit
+    autostarted in the tray for days with no window open. The updater self-limits
+    to one real check a day, so the hourly poll is nearly free. A click on the
+    notification swaps the exe in place and relaunches. Only meaningful for the
+    packaged Windows exe; a source run or macOS bundle cannot swap itself.
+    """
+    if not updater.can_self_update():
+        return
+
+    def check_loop():
+        while True:
+            try:
+                if updater.due_for_check():
+                    info = updater.check_for_update()
+                    if info and not updater.is_skipped(info.version):
+                        core._update_info = info
+                        try:
+                            icon.notify(
+                                t("update_notify", lang).format(version=info.version),
+                                "HenkerDPI")
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            time.sleep(3600)
+
+    threading.Thread(target=check_loop, daemon=True).start()
+
+    if os.name != "nt":
+        return
+    # pystray builds its win32 message map from bound methods in Icon.__init__,
+    # so the map entry is what has to be wrapped to see the balloon click. This
+    # is private API: any failure stays harmless (the notification still shows,
+    # it just stops being clickable).
+    try:
+        from pystray._util import win32 as _pswin32
+        handlers = icon._message_handlers
+        original = handlers[_pswin32.WM_NOTIFY]
+    except Exception:
+        return
+
+    def on_notify(wparam, lparam):
+        if lparam == _NIN_BALLOONUSERCLICK and getattr(core, "_update_info", None):
+            threading.Thread(target=_apply_update, args=(core, icon),
+                             daemon=True).start()
+            return
+        return original(wparam, lparam)
+
+    try:
+        handlers[_pswin32.WM_NOTIFY] = on_notify
+    except Exception:
+        pass
+
+
+def _apply_update(core, icon):
+    """Download, verify and swap in the update, then relaunch the new exe."""
+    info = getattr(core, "_update_info", None)
+    if not info:
+        return
+    try:
+        core.stop()                       # engine down first, so DNS is restored
+        path = updater.download_update(info)
+        updater.apply_update(path)
+    except Exception as e:
+        print("[!] update failed:", e)
+        return
+    global _ui_proc
+    if _ui_proc and _ui_proc.poll() is None:
+        try:
+            _ui_proc.terminate()
+        except Exception:
+            pass
+    try:
+        icon.stop()
+    except Exception:
+        pass
+    updater.relaunch()
 
 
 def ensure_admin():
@@ -257,6 +348,8 @@ def main():
         restore_dns_from_journal()
     except Exception:
         pass
+
+    updater.cleanup_old_version()      # delete the exe an earlier update left aside
 
     core = Core()
     threading.Thread(target=ipc_server, args=(core,), daemon=True).start()
