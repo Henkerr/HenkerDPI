@@ -7,7 +7,20 @@ each one publishes the SHA-256 of its assets.
 
 ---
 
-## 3.0.0 — 2026-08-29
+## 3.0.1 — 2026-08-31
+
+A crash fix for the 3.0.0 WebView build.
+
+### Fixed
+- **3.0.0 could fail to start with "No module named 'unicodedata'" or "name
+  'base_events' is not defined" (and "Failed to start embedded python
+  interpreter").** The onefile exe opens its window and self-elevates by
+  re-launching itself, and each re-launched copy inherited the PyInstaller
+  bootloader's temp-folder handoff variables. So the window process and the
+  engine process shared one `%TEMP%\_MEIxxxx` unpack folder, and whichever
+  exited first deleted it out from under the other — which then crashed on its
+  next import. Each re-launch now unpacks and owns a private folder. The bundle
+  itself was always complete; nothing was missing from it.
 
 A new interface: the window is now a WebView app with five selectable themes and
 live switching between them, replacing the single Tk window.

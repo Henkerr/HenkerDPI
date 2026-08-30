@@ -181,7 +181,11 @@ def show_ui():
         args = [sys.executable, "--ui"]
     else:
         args = [sys.executable, UI_SCRIPT]
-    _ui_proc = subprocess.Popen(args, cwd=HERE, creationflags=creationflags)
+    # env=child_env(): a onefile exe re-launching itself must NOT pass the
+    # PyInstaller _MEI handoff vars, or the window process would share — and then
+    # prematurely delete — this core's extraction folder (see config.child_env).
+    _ui_proc = subprocess.Popen(args, cwd=HERE, creationflags=creationflags,
+                                env=config.child_env())
 
 
 def _tray_image():
@@ -317,6 +321,11 @@ def ensure_admin():
     if os.name != "nt" or is_admin():
         return
     params = " ".join('"%s"' % a for a in sys.argv[1:])
+    # ShellExecute has no environment parameter — the elevated process inherits
+    # this one's block as-is. Scrub the PyInstaller _MEI handoff vars first so the
+    # elevated copy extracts its own folder instead of reusing (and, once this
+    # launcher exits below, losing) ours. See config.scrub_pyi_env.
+    config.scrub_pyi_env()
     ctypes.windll.shell32.ShellExecuteW(
         None, "runas", sys.executable, '"%s" %s' % (os.path.abspath(__file__), params), None, 1)
     sys.exit(0)

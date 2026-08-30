@@ -33,6 +33,8 @@ import time
 import urllib.error
 import urllib.request
 
+import config
+
 from config import (APP_VERSION, GITHUB_REPO, RELEASE_ASSET_NAME, STATE_DIR)
 
 _API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -373,8 +375,13 @@ def relaunch() -> None:
     --updated makes the new instance wait for this one's single-instance mutex
     to be released instead of exiting with "already running".
     """
+    # env=child_env(): without it the freshly installed exe would inherit this
+    # (old) build's PyInstaller _MEI handoff vars and run from the outgoing
+    # build's extraction folder — stale code, then a crash the moment this
+    # process exits and that folder is removed. See config.child_env.
     subprocess.Popen(
         [current_exe(), "--updated"],
         creationflags=_DETACHED | _NEW_GROUP | _CF,
         close_fds=True,
+        env=config.child_env(),
         cwd=os.path.dirname(current_exe()) or None)

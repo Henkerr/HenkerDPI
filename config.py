@@ -11,7 +11,7 @@ import sys
 # Single source of truth for the running build's version. Keep in sync with
 # version_info.txt (FileVersion) and setup.iss (AppVersion) when releasing —
 # updater.py compares this against the latest GitHub release tag.
-APP_VERSION = "3.0.0"
+APP_VERSION = "3.0.1"
 
 # Repository the updater queries. Both are validated at download time so a
 # tampered API response cannot point the downloader at an arbitrary host.
@@ -145,6 +145,42 @@ def sweep_stale_mei() -> int:
         except Exception:
             pass
     return removed
+
+
+# PyInstaller's onefile bootloader unpacks the exe to %TEMP%\_MEIxxxx and hands
+# that path to its Python child stage through these environment variables. A
+# onefile exe that relaunches ITSELF (via sys.executable — we do this to open the
+# window as a second process and to self-elevate) must not let the new process
+# inherit them: seeing them set, the new bootloader skips its own extraction and
+# runs from the PARENT's _MEI folder instead. The two processes then share one
+# folder, and whichever exits first deletes it out from under the other, which
+# crashes on its next lazy import ("No module named 'unicodedata'", "name
+# 'base_events' is not defined"). Scrub them so every self-relaunch extracts and
+# owns a private copy. No-op in a source checkout (the vars are simply absent).
+_PYI_HANDOFF_VARS = ("_MEIPASS2", "_PYI_APPLICATION_HOME_DIR", "_PYI_ARCHIVE_FILE",
+                     "_PYI_PARENT_PROCESS_LEVEL", "_PYI_SPLASH_IPC")
+
+
+def _is_pyi_handoff(key: str) -> bool:
+    return key in _PYI_HANDOFF_VARS or key.startswith("_PYI_")
+
+
+def child_env() -> dict:
+    """A copy of os.environ safe to hand a re-launched copy of this exe."""
+    return {k: v for k, v in os.environ.items() if not _is_pyi_handoff(k)}
+
+
+def scrub_pyi_env() -> None:
+    """Drop the onefile handoff vars from THIS process's own environment.
+
+    For a relaunch path that cannot pass a custom environment block
+    (ShellExecute during self-elevation), the child inherits os.environ as-is,
+    so it must be scrubbed in place beforehand. Harmless to the running process:
+    the interpreter already captured its extraction dir in sys._MEIPASS at
+    startup and never re-reads these vars.
+    """
+    for k in [k for k in os.environ if _is_pyi_handoff(k)]:
+        os.environ.pop(k, None)
 
 
 SETTINGS_FILE = resolve_pref("settings.json")
