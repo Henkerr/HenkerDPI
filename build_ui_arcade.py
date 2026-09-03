@@ -1,70 +1,97 @@
 # -*- coding: utf-8 -*-
-"""Wire the pixel-arcade home (arcade_home_v2.html) to the live engine bridge.
+"""Generate ui/arcade.html from the arcade GAME master (arcade_game_v2_enhanced.html).
 
-The canvas rendering, sprites, starfield, audio and input stay EXACTLY as built.
-Only the data source and side effects are redirected: on/bypass/uptime come from
-the engine, the settings rows persist to it, and the TEMA row switches between the
-5 app themes. bridge.js globals (on, bypass, SET, sure, toggleDpi, changeSetting)
-are classic-script globals, so the appended override can reassign them in place.
+The master is a self-contained mockup: an HTML home + settings + a canvas
+Space-Invaders game (5 DPI-themed chapters, boss waves, power-ups). This wires
+the home + settings to the REAL engine via bridge.js (replacing the master's
+mock controller) and drops the game canvas in untouched. "OYUN MODU" on the home
+launches the game; the frame recolours per chapter so game mode reads as distinct.
+Re-run after editing arcade_game_v2_enhanced.html.
 """
 import re, os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = r"C:\Users\mumin\AppData\Local\Temp\claude\C--Users-mumin-henkerdpi-v2\e7b5044d-28e3-4241-a490-349a8ca8ed60\scratchpad\arcade_home_v2.html"
-UI = os.path.join(HERE, "ui")
+SRC = os.path.join(HERE, "arcade_game_v2_enhanced.html")
+OUT = os.path.join(HERE, "ui", "arcade.html")
 
-text = open(SRC, encoding="utf-8").read()
-css = re.search(r"<style>(.*?)</style>", text, re.S).group(1)
-after = text.split("</style>", 1)[1]
-body_html = after.split("<script>", 1)[0].strip()
-script = re.search(r"<script>(.*?)</script>", after, re.S).group(1)
+src = open(SRC, encoding="utf-8").read()
+style = re.search(r"<title>HenkerDPI</title>\s*<style>(.*?)</style>", src, re.S).group(1)
+after_style = src.split("</style>", 1)[1]
+bodyhtml = after_style.split("<script>", 1)[0]
+bodyhtml = bodyhtml[bodyhtml.index('<div class="brand"'):]
+game = re.findall(r"<script>(.*?)</script>", after_style, re.S)[0]   # the game engine
+assert "spawnWave" in game and "CHAPTERS" in game, "game engine not captured"
 
-# TEMA row + palette now map to the 5 real app themes (arcade = index 3, stays pink)
-script = script.replace(
-    'const THEME_COLORS=["#ff3d9a","#4d8bff","#6d6af2","#2dd4bf","#e8b25a"];',
-    'const THEME_COLORS=["#4d8bff","#2dd4bf","#38bdf8","#ff3d9a","#16a34a"];', 1)
-script = script.replace(
-    '{label:"TEMA",     opts:["ARCADE","GRAPHITE","IRIS","HALCYON","OBSIDIAN"], i:0},',
-    '{label:"TEMA",     opts:["MEVCUT","CONSOLE","BENTO","ARCADE","COMBAT"], i:3},', 1)
-assert "MEVCUT" in script and "#16a34a" in script, "arcade patch failed"
+# The live-engine controller. Replaces the master's mock: the home DPI orb/stats
+# and the settings rows now talk to the engine through bridge.js (window.HDPI).
+BRIDGE_SCRIPT = r"""
+/* --- live-engine wiring: home + settings talk to the real engine via bridge.js;
+       the game canvas is self-contained. Replaces the mock screen controller. --- */
+let screen='home';
+function showScr(id){for(const s of document.querySelectorAll('.screen'))s.classList.add('hidden');document.getElementById(id).classList.remove('hidden');}
+function showHome(){ if(gameActive){gameActive=false;} gameChrome(false); screen='home'; showScr('home'); if(window.P)P.tick(); }
+function showSettings(){ screen='settings'; showScr('settings'); }
+function showGame(){ screen='game'; showScr('game'); gameActive=true; gameChrome(true); if(typeof startGame==='function')startGame(); }
+function exitGame(){ gameActive=false; gameChrome(false); screen='home'; showScr('home'); if(window.P)P.tick(); }
+function toggleDpi(){ HDPI.toggle().then(()=>{ if(window.P)P.tick(); }); }
+// menu<->game chrome: cyan game-mode frame on entry (syncChrome later paints the chapter colour)
+function gameChrome(on){ var app=document.querySelector('.app'); if(app){ app.style.borderColor=on?'#22e3ff':''; app.style.boxShadow=on?'0 30px 90px rgba(0,0,0,.6), 0 0 62px rgba(34,227,255,.4)':''; } var g=document.getElementById('gtag'); if(g&&on)g.textContent='OYUN MODU'; }
 
-OVERRIDE = r"""
-/* --- live-engine bridge: redirect data + side effects, leave rendering intact --- */
-(function(){
-  const THEME_KEYS=["mevcut","console","bento","arcade","combat"];
-  let SU=0, SUat=0;                       // uptime baseline for a smooth per-second clock
-  sure=function(){ if(!on) return "00:00"; const s=Math.floor(SU+(performance.now()-SUat)/1000);
-    return p2(Math.floor(s/60))+":"+p2(s%60); };
-  toggleDpi=function(){ on=!on; flash=1; flashCol=on?"94,245,143":"255,61,154";
-    beep(on?1100:240, on?.12:.14, on?"square":"sawtooth", .05);
-    HDPI.toggle().then(()=>P.tick()); };
-  changeSetting=function(dir){ const s=SET[setSel]; if(!s) return; beep(620,.04,"square",.03);
-    if(s.label==="TEMA"){ const i=(s.i+dir+THEME_KEYS.length)%THEME_KEYS.length; s.i=i;
-      if(THEME_KEYS[i]!=="arcade") HDPI.nav(THEME_KEYS[i]); else applyTheme(); return; }
-    s.i=(s.i+dir+s.opts.length)%s.opts.length;
-    if(s.label==="MOD") HDPI.setMode(s.i===0?"all":"selective");
-    else if(s.label==="DNS") HDPI.setDns(["cloudflare","google","quad9"][s.i]);
-    else if(s.label==="OTOMATIK") HDPI.setAutostart(s.i===1); };
-  function render(st){
-    on=st.running; bypass=st.bypassed; SU=st.uptime; SUat=performance.now();
-    SET[0].i = st.mode==="all"?0:1;
-    SET[1].i = ({cloudflare:0,google:1,quad9:2})[st.dns] ?? 0;
-    SET[2].i = st.autostart?1:0;
-    SET[3].i = 3;                          // this page IS the arcade theme → keep it pink + selected
-    applyTheme();
-  }
-  const P=HDPI.poll(render); window.P=P;
-})();
+// --- home render from live engine state ---
+function fmtUp(sec){ return Math.floor(sec/60)+':'+String(sec%60).padStart(2,'0'); }
+function renderHome(s){
+  const on=!!s.running;
+  const orb=document.getElementById('orb'),lbl=document.getElementById('dpiLbl'),btn=document.getElementById('dpiBtn'),t=document.getElementById('stTitle'),d=document.getElementById('stDesc');
+  if(orb)orb.classList.toggle('on',on);
+  if(t){t.textContent=on?'Koruma Aktif':'Koruma Kapalı';t.style.color=on?'#4ade80':'';}
+  if(d)d.textContent=on?'DPI bypass çalışıyor':'Korumayı başlatmak için DPI Başlat';
+  if(lbl)lbl.textContent=on?'DPI DURDUR':'DPI BAŞLAT';
+  if(btn)btn.className='dpibtn '+(on?'on':'off');
+  const by=document.getElementById('bypass');if(by)by.textContent=(s.bypassed||0).toLocaleString('tr');
+  const up=document.getElementById('uptime');if(up)up.textContent=on?fmtUp(s.uptime||0):'—';
+  const mc=document.querySelector('#home .modechip');if(mc)mc.innerHTML='Mod: <b>'+(s.mode==='all'?'Tümü':'Seçili')+'</b> · DNS: <b>'+(s.dns_name||'Cloudflare')+'</b>';
+  syncSettings(s);
+}
+
+// --- settings screen wired to the engine (rows are in a fixed order) ---
+let _sBound=false;
+function bindSettings(){
+  if(_sBound)return; _sBound=true;
+  const rows=[...document.querySelectorAll('#settings .srow')];
+  const dnsSw=rows[0]&&rows[0].querySelector('.sw'); if(dnsSw)dnsSw.addEventListener('click',()=>{dnsSw.classList.toggle('on');HDPI.setDnsEnabled(dnsSw.classList.contains('on'));});
+  const dnsMenu=rows[1]&&rows[1].querySelector('.menu'); if(dnsMenu)dnsMenu.addEventListener('click',async()=>{const s=await HDPI.getState();const i=HDPI.DNS.findIndex(x=>x[1]===s.dns_name);await HDPI.setDns(HDPI.DNS[(i+1)%HDPI.DNS.length][0]);if(window.P)P.tick();});
+  if(rows[2])rows[2].querySelectorAll('.chips span').forEach(sp=>sp.addEventListener('click',()=>{for(const x of sp.parentNode.children)x.classList.remove('on');sp.classList.add('on');HDPI.setMode(sp.textContent.trim()==='Tümü'?'all':'selective');}));
+  const autoSw=rows[3]&&rows[3].querySelector('.sw'); if(autoSw)autoSw.addEventListener('click',()=>{autoSw.classList.toggle('on');HDPI.setAutostart(autoSw.classList.contains('on'));});
+  const rstSw=rows[4]&&rows[4].querySelector('.sw'); if(rstSw)rstSw.addEventListener('click',()=>rstSw.classList.toggle('on'));
+  const dots=rows[5]?[...rows[5].querySelectorAll('.dots i')]:[];
+  dots.forEach((dot,i)=>{const k=HDPI.THEMES[i]&&HDPI.THEMES[i][0];if(dot)dot.addEventListener('click',()=>{if(k&&k!=='arcade')HDPI.nav(k);});});
+}
+function syncSettings(s){
+  bindSettings();
+  const rows=[...document.querySelectorAll('#settings .srow')];
+  const dnsSw=rows[0]&&rows[0].querySelector('.sw'); if(dnsSw)dnsSw.classList.toggle('on',!!s.dns_enabled);
+  const dnsMenu=rows[1]&&rows[1].querySelector('.menu'); if(dnsMenu)dnsMenu.textContent=(s.dns_name||'Cloudflare')+' ▾';
+  const dnsSub=rows[1]&&rows[1].querySelector('.l small'); if(dnsSub)dnsSub.textContent=s.dns_ip||'1.1.1.1';
+  if(rows[2])rows[2].querySelectorAll('.chips span').forEach(sp=>sp.classList.toggle('on',(sp.textContent.trim()==='Tümü')===(s.mode==='all')));
+  const autoSw=rows[3]&&rows[3].querySelector('.sw'); if(autoSw)autoSw.classList.toggle('on',!!s.autostart);
+  const dots=rows[5]?[...rows[5].querySelectorAll('.dots i')]:[]; dots.forEach((dot,i)=>{const k=HDPI.THEMES[i]&&HDPI.THEMES[i][0];dot.classList.toggle('on',k==='arcade');});
+}
+
+const P=HDPI.poll(renderHome); window.P=P;
+addEventListener('keydown',e=>{ if(e.key==='Escape'&&screen==='game')exitGame(); });
 """
 
-page = ('<!doctype html>\n<html lang="tr"><head>\n<meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
-        '<title>HenkerDPI</title>\n<style>' + css + '\nbody{padding-top:40px}\n</style>\n</head><body>\n'
-        + body_html + '\n'
-        + '<script src="bridge.js"></script>\n'
-        + '<script>\n' + script + '\n</script>\n'
-        + '<script>\n' + OVERRIDE + '\n</script>\n'
-        + '</body></html>\n')
+TWEAK_CSS = "\n/* --- in-app arcade fit: hide the preview brand, clear the injected titlebar --- */\n.brand{display:none}\nbody{padding:0;padding-top:34px;gap:0}\n"
 
-open(os.path.join(UI, "arcade.html"), "w", encoding="utf-8").write(page)
-print("wrote arcade.html", len(page), "bytes")
+out = ('<!doctype html>\n<html lang="tr"><head>\n'
+       '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">\n'
+       '<title>HenkerDPI</title>\n'
+       '<style>' + style + TWEAK_CSS + '</style>\n'
+       '</head><body>\n'
+       + bodyhtml.strip() + '\n'
+       + '<script src="bridge.js"></script>\n'
+       + '<script>\n' + game + '\n</script>\n'
+       + '<script>\n' + BRIDGE_SCRIPT + '\n</script>\n'
+       + '</body></html>\n')
+open(OUT, "w", encoding="utf-8").write(out)
+print("wrote ui/arcade.html", len(out), "bytes")

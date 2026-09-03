@@ -38,6 +38,8 @@ class Core:
         self.started = 0.0
         self.settings = config.load_settings()
         self._update_info = None          # set by the tray update watcher
+        self._update_status = None        # None | "downloading" | "failed" — shown in the window banner
+        self._icon = None                 # tray icon, so an IPC apply_update can stop it
 
     def _run(self):
         try:
@@ -126,6 +128,8 @@ def _dispatch(core, msg):
     if m == "set_autostart":    core.set_autostart(*a); return None
     if m == "set_theme":        core.set_theme(*a); return None
     if m == "get_log":          return core.get_log(*a)
+    if m == "get_update":       return _update_dict(core)
+    if m == "apply_update":     return _start_apply(core)
     if m == "show_ui":          show_ui(); return None
     if m == "ping":             return "pong"
     raise ValueError("unknown method: %r" % m)
@@ -244,6 +248,7 @@ def _wire_updates(core, icon, lang):
     notification swaps the exe in place and relaunches. Only meaningful for the
     packaged Windows exe; a source run or macOS bundle cannot swap itself.
     """
+    core._icon = icon                     # so an IPC apply_update can stop the tray
     if not updater.can_self_update():
         return
 
@@ -280,9 +285,12 @@ def _wire_updates(core, icon, lang):
         return
 
     def on_notify(wparam, lparam):
+        # Clicking the toast OPENS THE WINDOW rather than silently installing:
+        # the window shows an "update ready → Yükle" banner (bridge.js polls
+        # get_update), so the update is visible and installs on the user's click
+        # even when the flaky Win10/11 toast-click does not reach this handler.
         if lparam == _NIN_BALLOONUSERCLICK and getattr(core, "_update_info", None):
-            threading.Thread(target=_apply_update, args=(core, icon),
-                             daemon=True).start()
+            show_ui()
             return
         return original(wparam, lparam)
 
@@ -292,17 +300,39 @@ def _wire_updates(core, icon, lang):
         pass
 
 
-def _apply_update(core, icon):
+def _update_dict(core):
+    """The pending update (if any) as a plain dict for the window banner."""
+    info = getattr(core, "_update_info", None)
+    if not info:
+        return None
+    return {"version": info.version, "tag": info.tag,
+            "notes_url": info.notes_url, "status": getattr(core, "_update_status", None)}
+
+
+def _start_apply(core):
+    """Kick off the download+install in the background (called from the window)."""
+    if not getattr(core, "_update_info", None):
+        return False
+    if getattr(core, "_update_status", None) == "downloading":
+        return True                       # already running — don't start twice
+    threading.Thread(target=_apply_update, args=(core, getattr(core, "_icon", None)),
+                     daemon=True).start()
+    return True
+
+
+def _apply_update(core, icon=None):
     """Download, verify and swap in the update, then relaunch the new exe."""
     info = getattr(core, "_update_info", None)
     if not info:
         return
+    core._update_status = "downloading"
     try:
         core.stop()                       # engine down first, so DNS is restored
         path = updater.download_update(info)
         updater.apply_update(path)
     except Exception as e:
         print("[!] update failed:", e)
+        core._update_status = "failed"
         return
     global _ui_proc
     if _ui_proc and _ui_proc.poll() is None:
@@ -310,10 +340,11 @@ def _apply_update(core, icon):
             _ui_proc.terminate()
         except Exception:
             pass
-    try:
-        icon.stop()
-    except Exception:
-        pass
+    if icon:
+        try:
+            icon.stop()
+        except Exception:
+            pass
     updater.relaunch()
 
 

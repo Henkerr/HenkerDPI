@@ -7,6 +7,35 @@ each one publishes the SHA-256 of its assets.
 
 ---
 
+## 3.0.2 — 2026-09-03
+
+The Arcade game returns, updating becomes visible, and a stray warning is gone.
+
+### Added
+- **A real playable game in the Arcade theme.** "OYUN MODU" now launches a
+  canvas shoot-'em-up instead of a placeholder: five DPI-themed chapters (DPI
+  Duvarı, SNI Sızması, TLS Parçalama, QUIC Karadeliği, Kernel Savaşı), each three
+  waves ending in a DPI CORE boss, with power-ups themed after the engine's own
+  tricks (Fragment, Decoy, Kernel, DoH, Laser, RST-Drop, Repair), combos and a
+  high score. Entering game mode is unmistakable: the window frame takes on the
+  chapter's colour and the top bar names the chapter. The home and settings of
+  the Arcade theme are now wired to the live engine.
+- **A visible update banner in the window.** When a new release is ready, opening
+  the window shows a "Yeni sürüm hazır → Yükle" bar on any theme, so updating no
+  longer depends on the Windows notification being clicked.
+
+### Changed
+- **Clicking the update notification now opens the window** (showing the banner
+  above) rather than installing silently in the background — the update is
+  visible, and it still installs on one click.
+
+### Fixed
+- **A "Failed to remove temporary directory: …\\_MEIxxxx" warning could pop up on
+  startup.** The startup sweep that clears leftover onefile temp folders could
+  race the self-elevation launcher's own cleanup and make its bootloader fail
+  loudly. The sweep now leaves folders younger than two minutes alone, so it only
+  ever removes genuinely stale ones.
+
 ## 3.0.1 — 2026-08-31
 
 A crash fix for the 3.0.0 WebView build.

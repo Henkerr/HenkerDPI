@@ -7,11 +7,12 @@ import json
 import os
 import platform
 import sys
+import time
 
 # Single source of truth for the running build's version. Keep in sync with
 # version_info.txt (FileVersion) and setup.iss (AppVersion) when releasing —
 # updater.py compares this against the latest GitHub release tag.
-APP_VERSION = "3.0.1"
+APP_VERSION = "3.0.2"
 
 # Repository the updater queries. Both are validated at download time so a
 # tampered API response cannot point the downloader at an arbitrary host.
@@ -120,16 +121,35 @@ def sweep_stale_mei() -> int:
     live instance, including this one and the --ui child, keeps its folder locked,
     so os.rename fails on it and it is skipped. No-ops in a source checkout.
     Returns how many were removed.
+
+    AGE GUARD: skip any folder younger than GRACE seconds. When the app is
+    launched by double-click it first runs a NON-elevated launcher that
+    ShellExecute-elevates the real core and exits at once; that launcher's own
+    PyInstaller bootloader is cleaning up its fresh _MEI at the very moment the
+    core (this process) runs the sweep. os.rename is only a lock check, and a
+    folder mid-bootloader-cleanup is transiently UNLOCKED — so without the age
+    guard the sweep could rename that folder out from under the launcher's
+    bootloader, whose next delete step then fails and pops a windowed "Failed to
+    remove temporary directory" MessageBox at the user. A folder that a live
+    sibling still owns is always brand new; a genuine orphan from a past run is
+    minutes/hours old. Only touch the old ones.
     """
     if not getattr(sys, "frozen", False) or os.name != "nt":
         return 0
     import glob
     import shutil
     import tempfile
+    GRACE = 120                                   # seconds; below this a sibling may still own it
+    now = time.time()
     removed = 0
     for d in glob.glob(os.path.join(tempfile.gettempdir(), "_MEI*")):
         try:
             if not os.path.isdir(d):
+                continue
+            try:
+                if now - os.path.getmtime(d) < GRACE:
+                    continue                      # fresh — a concurrent sibling may own it
+            except OSError:
                 continue
             if not (os.path.isdir(os.path.join(d, "pydivert"))
                     or os.path.exists(os.path.join(d, "ui", "mevcut.html"))

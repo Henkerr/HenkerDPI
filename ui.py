@@ -54,6 +54,8 @@ class Api:
     def set_autostart(self, b):   return _call("set_autostart", b)
     def set_theme(self, tk):      return _call("set_theme", tk)
     def get_log(self, n=20):      return _call("get_log", n)
+    def get_update(self):         return _call("get_update")
+    def apply_update(self):       return _call("apply_update")
 
     def win_minimize(self):
         if WIN:

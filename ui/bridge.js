@@ -42,6 +42,8 @@
       set_autostart(b) { s.autostart = !!b; save(); return Promise.resolve(); },
       set_theme(t) { s.theme = t; save(); return Promise.resolve(); },
       get_log(n) { return Promise.resolve(events.slice(-(n || 20)).reverse()); },
+      get_update() { return Promise.resolve(null); },   // no update in browser preview
+      apply_update() { return Promise.resolve(true); },
     };
   })();
 
@@ -206,7 +208,51 @@
     fig.style.transform = sc < 0.999 ? "scale(" + sc.toFixed(4) + ")" : "none";
   }
 
-  if (document.body) injectTitlebar(); else document.addEventListener("DOMContentLoaded", injectTitlebar);
+  // ---- update banner: shown on ANY theme whenever the core reports a pending
+  // release. This makes the update visible (and installable) just by opening the
+  // window, independent of the unreliable Win10/11 toast-click. ----
+  const getUpdate = () => Promise.resolve(T().get_update ? T().get_update() : null);
+  const applyUpdate = () => Promise.resolve(T().apply_update ? T().apply_update() : false);
+  function injectUpdateBanner() {
+    if (document.getElementById("hdpi-upd")) return;
+    const css =
+      '#hdpi-upd{position:fixed;left:0;right:0;bottom:0;z-index:99995;display:none;'
+      + 'align-items:center;gap:10px;padding:9px 12px;background:linear-gradient(180deg,#171a1f,#0e1014);'
+      + 'border-top:2px solid #4d8bff;font:13px/1.3 "Segoe UI",-apple-system,system-ui,sans-serif;'
+      + 'color:#eceef2;box-shadow:0 -6px 20px rgba(0,0,0,.45)}'
+      + '#hdpi-upd.show{display:flex}'
+      + '#hdpi-upd .ico{width:26px;height:26px;border-radius:8px;background:rgba(77,139,255,.16);'
+      + 'display:grid;place-items:center;color:#4d8bff;flex:none}#hdpi-upd .ico svg{width:15px;height:15px}'
+      + '#hdpi-upd .txt{flex:1;min-width:0}#hdpi-upd .txt b{display:block;font-weight:700}'
+      + '#hdpi-upd .txt small{color:#9499a6}'
+      + '#hdpi-upd button{border:none;border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer;font-size:12.5px}'
+      + '#hdpi-upd .go{background:#4d8bff;color:#fff}#hdpi-upd .go:hover{background:#3d7bef}'
+      + '#hdpi-upd .go:disabled{opacity:.7;cursor:default}'
+      + '#hdpi-upd .dismiss{background:transparent;color:#9499a6;padding:8px 10px}';
+    const st = document.createElement("style"); st.textContent = css; document.head.appendChild(st);
+    const el = document.createElement("div"); el.id = "hdpi-upd";
+    el.innerHTML = '<div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></div>'
+      + '<div class="txt"></div><button class="go">Yükle</button><button class="dismiss" title="Kapat">✕</button>';
+    document.body.appendChild(el);
+    const txt = el.querySelector(".txt"), go = el.querySelector(".go"), dis = el.querySelector(".dismiss");
+    let dismissed = null, busy = false, curVer = null;
+    dis.addEventListener("click", () => { el.classList.remove("show"); dismissed = curVer; });
+    go.addEventListener("click", async () => { if (busy) return; busy = true; go.disabled = true; go.textContent = "İndiriliyor…"; try { await applyUpdate(); } catch (e) {} });
+    async function check() {
+      let u = null; try { u = await getUpdate(); } catch (e) { return; }
+      if (!u || !u.version) { el.classList.remove("show"); return; }
+      curVer = u.version;
+      if (u.status === "downloading") { txt.innerHTML = "<b>Güncelleme indiriliyor…</b><small>Bittiğinde uygulama yeniden başlar</small>"; go.style.display = "none"; dis.style.display = "none"; el.classList.add("show"); return; }
+      go.style.display = ""; dis.style.display = "";
+      if (u.status === "failed") { txt.innerHTML = "<b>Güncelleme başarısız</b><small>Tekrar denemek için Yükle</small>"; go.textContent = "Tekrar"; go.disabled = false; busy = false; el.classList.add("show"); return; }
+      if (dismissed === u.version) return;
+      txt.innerHTML = "<b>Yeni sürüm " + u.version + " hazır</b><small>Yüklemek için Yükle’ye bas</small>"; go.textContent = "Yükle"; go.disabled = false; busy = false; el.classList.add("show");
+    }
+    whenReady(() => { check(); setInterval(() => { if (!document.hidden) check(); }, 8000); });
+  }
+
+  if (document.body) { injectTitlebar(); injectUpdateBanner(); }
+  else document.addEventListener("DOMContentLoaded", () => { injectTitlebar(); injectUpdateBanner(); });
   if (document.querySelector("figure")) {
     fitCard(); window.addEventListener("resize", fitCard);
     window.addEventListener("load", fitCard); setTimeout(fitCard, 250);
@@ -220,5 +266,6 @@
     getLog: (n) => Promise.resolve(T().get_log ? T().get_log(n) : []),
     toggle: () => T().toggle(), setMode: (m) => T().set_mode(m), setDns: (d) => T().set_dns(d),
     setDnsEnabled: (b) => T().set_dns_enabled(b), setAutostart: (b) => T().set_autostart(b),
+    getUpdate, applyUpdate,
   };
 })();

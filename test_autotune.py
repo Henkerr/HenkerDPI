@@ -183,16 +183,27 @@ if os.name == "nt":
             def stop(self):
                 pass
 
-        _fired6 = []
-        app._apply_update = lambda c, i: _fired6.append(1)
+        # Clicking the toast now OPENS THE WINDOW (which shows an install banner)
+        # rather than installing silently — robust against the flaky Win10/11
+        # toast-click. Verify the handler routes to show_ui, not a silent install.
+        _opened6 = []
+        app.show_ui = lambda: _opened6.append(1)
         _icon6 = pystray.Icon("selftest6", None, "selftest6", pystray.Menu())
         _before6 = _icon6._message_handlers[_pswin32.WM_NOTIFY]
         app._wire_updates(_FakeCore(), _icon6, "tr")
         check("webview: update wiring replaced the tray WM_NOTIFY handler",
               _before6 is not _icon6._message_handlers[_pswin32.WM_NOTIFY])
         _icon6._message_handlers[_pswin32.WM_NOTIFY](0, app._NIN_BALLOONUSERCLICK)
-        time.sleep(0.15)                           # _apply_update runs off-thread
-        check("webview: clicking the update notification installs", len(_fired6) == 1)
+        check("webview: clicking the update notification opens the window", len(_opened6) == 1)
+
+        # The window's update banner reads/triggers the update over IPC; verify the
+        # dispatch routes both methods and no-ops safely when nothing is pending.
+        class _NoUpd:
+            _update_info = None
+        check("webview: get_update IPC is None with no pending release",
+              app._dispatch(_NoUpd(), {"m": "get_update"}) is None)
+        check("webview: apply_update IPC is a no-op with no pending release",
+              app._dispatch(_NoUpd(), {"m": "apply_update"}) is False)
 else:
     print("SKIP - webview update hook check (not Windows)")
 
