@@ -5,9 +5,7 @@ While HenkerDPI sits in the tray, only this process runs (engine + tray, ~35 MB)
 no WebView2 is alive. Opening the window spawns ui.py; closing it exits ui.py and
 frees all of its memory. ui.py reaches the engine only through the IPC below.
 
-Slice status: Mevcut theme end-to-end (state, toggle, mode, DNS, theme, autostart
-mirror). TODO next: schtasks autostart, categories/domains/log methods, the other
-four themes, single-instance for ui.py + bring-to-front, PyInstaller packaging.
+Open work: categories/domains methods, focusing an already-open ui.py window.
 """
 import sys, os, json, socket, threading, subprocess, time, ctypes
 
@@ -29,6 +27,41 @@ UI_SCRIPT = os.path.join(HERE, "ui.py")
 IPC_HOST, IPC_PORT = "127.0.0.1", 47654
 
 
+LOG_FILE = os.path.join(config.STATE_DIR, "engine.log")
+LOG_MAX_BYTES = 1024 * 1024
+_log_lock = threading.Lock()
+
+
+def engine_log(msg):
+    """Append one engine line to %LOCALAPPDATA%\\HenkerDPI\\engine.log.
+
+    The packaged app has no console, so without this every "[!]" the engine
+    prints is lost — and a user whose connection "drops sometimes" has nothing
+    to send. Rotates once at LOG_MAX_BYTES (keeps one old file).
+    """
+    line = "%s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg)
+    with _log_lock:
+        try:
+            if os.path.getsize(LOG_FILE) > LOG_MAX_BYTES:
+                os.replace(LOG_FILE, LOG_FILE + ".1")
+        except OSError:
+            pass
+        try:
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(line)
+        except OSError:
+            pass
+    try:
+        print(msg)
+    except Exception:
+        pass
+
+
+# If the engine thread exits without the user stopping it, bring it back after
+# this long instead of sitting "off" until the app is restarted by hand.
+ENGINE_RESTART_DELAY = 5.0
+
+
 class Core:
     """Owns the bypass engine and the settings the UI reads/writes."""
     def __init__(self):
@@ -36,29 +69,43 @@ class Core:
         self.thread = None
         self.running = False
         self.started = 0.0
+        self._gen = 0                     # bumps on every start/stop; a stale run loop exits
+        self._wake = threading.Event()
         self.settings = config.load_settings()
         self._update_info = None          # set by the tray update watcher
         self._update_status = None        # None | "downloading" | "failed" — shown in the window banner
         self._icon = None                 # tray icon, so an IPC apply_update can stop it
 
-    def _run(self):
-        try:
-            self.engine.start()          # blocks until stop()
-        except Exception as e:
-            print("[!] engine:", e)
-        finally:
+    def _run(self, gen, engine):
+        while self._gen == gen:
+            try:
+                engine.start()           # blocks until stop()
+            except Exception as e:
+                engine_log("[!] engine: %s" % e)
+            if self._gen != gen:
+                break
+            engine_log("[!] Motor beklenmedik sekilde durdu — %.0f sn sonra "
+                       "yeniden baslatiliyor" % ENGINE_RESTART_DELAY)
+            self._wake.wait(ENGINE_RESTART_DELAY)
+            self._wake.clear()
+        if self._gen == gen:
             self.running = False
 
     def start(self):
         if self.running:
             return
-        self.engine = BypassEngine(verbose=False)
+        self._gen += 1
+        self._wake.clear()                # a wake left by the last stop() must not cut the delay
+        self.engine = BypassEngine(log_callback=engine_log, verbose=False)
         self.running = True
         self.started = time.time()
-        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread = threading.Thread(target=self._run, args=(self._gen, self.engine),
+                                       daemon=True)
         self.thread.start()
 
     def stop(self):
+        self._gen += 1                    # the run loop must not bring it back
+        self._wake.set()
         if self.engine and self.running:
             try:
                 self.engine.stop()
@@ -100,8 +147,11 @@ class Core:
     def set_dns_enabled(self, b): self.settings["doh_enabled"] = bool(b); self._save()
     def set_theme(self, tk):      self.settings["theme"] = tk; self._save(reload=False)
     def set_autostart(self, b):
-        self.settings["autostart"] = bool(b); self._save(reload=False)
-        # TODO: register / unregister the schtasks boot task (reuse gui.py logic).
+        b = bool(b)
+        if not sync_autostart_task(b) and b:
+            return False                  # task could not be made: leave the switch off
+        self.settings["autostart"] = b; self._save(reload=False)
+        return True
 
     def get_log(self, n=20):
         """Recent real ClientHello events (domain + bypass/pass) for the live log."""
@@ -125,7 +175,7 @@ def _dispatch(core, msg):
     if m == "set_mode":         core.set_mode(*a); return None
     if m == "set_dns":          core.set_dns(*a); return None
     if m == "set_dns_enabled":  core.set_dns_enabled(*a); return None
-    if m == "set_autostart":    core.set_autostart(*a); return None
+    if m == "set_autostart":    return core.set_autostart(*a)
     if m == "set_theme":        core.set_theme(*a); return None
     if m == "get_log":          return core.get_log(*a)
     if m == "get_update":       return _update_dict(core)
@@ -348,6 +398,137 @@ def _apply_update(core, icon=None):
     updater.relaunch()
 
 
+# ---------------------------------------------------------------- autostart (Windows)
+TASK_NAME = "HenkerDPI"
+LEGACY_TASKS = ("HenkerDPI_V2",)
+_CF = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+# Registered from XML rather than `schtasks /sc onlogon`, whose defaults break a
+# tray app that must run for as long as the session: a 72-hour execution limit
+# (Task Scheduler kills it on day three), no start on battery (a laptop that
+# boots unplugged never starts it) and below-normal priority for the packet loop.
+_TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>HenkerDPI</Description></RegistrationInfo>
+  <Triggers>
+    <LogonTrigger><Enabled>true</Enabled><UserId>{user}</UserId></LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>{user}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>4</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{command}</Command>
+      <Arguments>{arguments}</Arguments>
+      <WorkingDirectory>{workdir}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
+"""
+
+
+def _task_action():
+    """(command, arguments) the logon task runs: this exe, or pythonw + app.py."""
+    if getattr(sys, "frozen", False):
+        return sys.executable, "--autostart"
+    exe = sys.executable
+    pyw = os.path.join(os.path.dirname(exe), "pythonw.exe")
+    if os.path.exists(pyw):
+        exe = pyw                          # no console window flashing at logon
+    return exe, '"%s" --autostart' % os.path.abspath(__file__)
+
+
+def _task_exists(name):
+    try:
+        return subprocess.run(["schtasks", "/query", "/tn", name],
+                              capture_output=True, creationflags=_CF).returncode == 0
+    except Exception:
+        return False
+
+
+def had_autostart_task():
+    """True if an older build left a logon task — its choice is carried over."""
+    return os.name == "nt" and any(_task_exists(n) for n in (TASK_NAME,) + LEGACY_TASKS)
+
+
+def sync_autostart_task(enabled):
+    """Make the logon task match `enabled`. Returns True on success.
+
+    Always rewritten when enabled, so a task left by an older build (wrong path,
+    72-hour limit, battery rule) is replaced by the current one. Legacy task
+    names are removed either way.
+    """
+    if os.name != "nt":
+        return False
+    for legacy in LEGACY_TASKS:
+        if _task_exists(legacy):
+            subprocess.run(["schtasks", "/delete", "/tn", legacy, "/f"],
+                           capture_output=True, creationflags=_CF)
+    if not enabled:
+        if _task_exists(TASK_NAME):
+            subprocess.run(["schtasks", "/delete", "/tn", TASK_NAME, "/f"],
+                           capture_output=True, creationflags=_CF)
+        return True
+    from xml.sax.saxutils import escape
+    command, arguments = _task_action()
+    user = "%s\\%s" % (os.environ.get("USERDOMAIN", ""), os.environ.get("USERNAME", ""))
+    xml = _TASK_XML.format(user=escape(user), command=escape(command),
+                           arguments=escape(arguments),
+                           workdir=escape(os.path.dirname(command)))
+    path = os.path.join(config.STATE_DIR, "autostart_task.xml")
+    try:
+        with open(path, "w", encoding="utf-16") as f:
+            f.write(xml)
+        r = subprocess.run(["schtasks", "/create", "/tn", TASK_NAME, "/xml", path, "/f"],
+                           capture_output=True, text=True, creationflags=_CF)
+        if r.returncode != 0:
+            engine_log("[!] Acilis gorevi olusturulamadi: %s" % (r.stderr or r.stdout).strip())
+        return r.returncode == 0
+    except Exception as e:
+        engine_log("[!] Acilis gorevi olusturulamadi: %s" % e)
+        return False
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def _sync_autostart_on_launch(core):
+    """Bring the logon task in line with the saved choice on every launch.
+
+    A 3.0.x user who switched autostart on got only a saved setting and no task
+    (the switch was a stub); a 2.x user has a task but no setting. Both end up
+    with a correct task here. Also repoints the task if the exe was moved.
+    """
+    try:
+        if "autostart" not in core.settings and had_autostart_task():
+            core.settings["autostart"] = True
+            config.save_settings(core.settings)
+        sync_autostart_task(bool(core.settings.get("autostart")))
+    except Exception as e:
+        engine_log("[!] Acilis gorevi esitlenemedi: %s" % e)
+
+
 def ensure_admin():
     if os.name != "nt" or is_admin():
         return
@@ -395,11 +576,15 @@ def main():
 
     core = Core()
     threading.Thread(target=ipc_server, args=(core,), daemon=True).start()
+    if os.name == "nt":
+        threading.Thread(target=_sync_autostart_on_launch, args=(core,),
+                         daemon=True).start()
 
-    if "--autostart" in sys.argv or core.settings.get("autostart"):
-        core.start()            # boot: run the engine, stay in the tray
-    else:
-        show_ui()               # normal launch: open the window
+    boot = "--autostart" in sys.argv
+    if boot or core.settings.get("autostart"):
+        core.start()            # protection on
+    if not boot:
+        show_ui()               # a launch by hand always opens the window
     run_tray(core)              # blocks on the main thread
 
 

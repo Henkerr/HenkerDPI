@@ -5,6 +5,7 @@ TTL-based fake packet + reverse TCP fragmentation + DoH.
 """
 
 import sys
+import socket
 import time
 import threading
 import ctypes
@@ -25,6 +26,23 @@ import autotune
 # one can break every HTTPS site on the other. Re-measuring on that change is
 # what makes "install it and forget it" hold.
 NET_WATCH_INTERVAL = 15.0
+
+# Health check of the running bypass. A user who sees Discord drop and come back
+# only after restarting the app is hitting a state the engine got into and never
+# left (a strategy measured during a network blip, a DNS pin lost on a re-pin, a
+# dead refuser thread). Every HEALTH_INTERVAL the engine opens a real handshake to
+# HEALTH_HOST through itself; two failed rounds in a row while the internet is
+# otherwise up trigger exactly what a restart does — re-pin DNS, re-measure,
+# reopen the handles. HEAL_COOLDOWN keeps a line that is genuinely down from
+# being re-measured over and over.
+HEALTH_INTERVAL = 90.0
+HEALTH_FAILS_TO_HEAL = 2
+HEAL_COOLDOWN = 600.0
+HEALTH_HOST = "discord.com"
+
+# A divert loop that stayed up this long was healthy; its death is a fresh
+# incident, not the next strike of the same one.
+LOOP_HEALTHY_AFTER = 60.0
 
 
 def is_admin() -> bool:
@@ -171,7 +189,19 @@ class BypassEngine:
             try:
                 pkt = handle.recv()
             except Exception:
-                break  # handle closed
+                # Closed by us (_close_quic_handle clears _quic_drop first), or
+                # it died under us. In the latter case the handle may still be
+                # diverting QUIC Initials into a queue nobody reads — the silent
+                # black-hole that makes Discord wait out a QUIC timeout. Fail
+                # open; the health check reopens it.
+                if self._quic_drop is handle and not self._stop_event.is_set():
+                    self._quic_drop = None
+                    try:
+                        handle.close()
+                    except Exception:
+                        pass
+                    self._log("[!] QUIC yakalayici durdu — kapatildi, yeniden acilacak")
+                break
             try:
                 ver = pkt.raw[0] >> 4
                 if ver == 4:
@@ -284,23 +314,30 @@ class BypassEngine:
             self._net_sig = autotune.network_signature()
             self._retune.clear()
             threading.Thread(target=self._net_watch, daemon=True).start()
+            threading.Thread(target=self._health_watch, daemon=True).start()
 
             restarts = 0
             while not self._stop_event.is_set():
                 self._apply_strategy()
+                opened = time.time()
                 self._divert_loop(main_filter)
                 if self._stop_event.is_set():
                     break
                 if self._retune.is_set():
                     restarts = 0        # deliberate re-open, not a failure
                     continue
-                # The loop returned without being asked to, i.e. the handle died
-                # under us. Re-open a few times — then stop, rather than spin.
+                # The handle died under us (or would not open). Never give up:
+                # an engine that stops here leaves the app looking "on" with no
+                # bypass until the user restarts it. Back off instead, and treat
+                # a loop that ran for a while as healthy so strikes spread over
+                # days do not add up.
+                if time.time() - opened > LOOP_HEALTHY_AFTER:
+                    restarts = 0
                 restarts += 1
-                if restarts > 3:
-                    self._log("[!] Divert handle kapandi — motor duruyor")
-                    break
-                self._stop_event.wait(1.0)
+                wait = min(30.0, 2.0 ** restarts)
+                self._log("[!] Divert handle kapandi — %.0f sn sonra yeniden aciliyor"
+                          % wait)
+                self._stop_event.wait(wait)
 
         except Exception as e:
             if not self._stop_event.is_set():
@@ -331,6 +368,10 @@ class BypassEngine:
         self._retune.clear()
         if force:
             self._reapply_dns()
+            # Reopen the QUIC refuser too, so a network change or a heal leaves
+            # nothing from the old state behind — the same as a restart would.
+            self._close_quic_handle()
+            self._sync_quic_handle()
         try:
             decoy, split, source = autotune.resolve_strategy(
                 self._settings, self._log, force=force)
@@ -379,11 +420,7 @@ class BypassEngine:
             self._log(f"[!] DNS yeniden uygulanamadi ({e})")
 
     def _net_watch(self):
-        """Notice a network change and force a re-measure.
-
-        Closing the main handle is what unblocks the recv() in the packet loop;
-        the loop then falls back to the outer while, re-measures and reopens.
-        """
+        """Notice a network change and force a re-measure."""
         while not self._stop_event.wait(NET_WATCH_INTERVAL):
             try:
                 sig = autotune.network_signature()
@@ -405,15 +442,86 @@ class BypassEngine:
             # Re-pin DNS to the new adapter and re-measure from scratch, not from
             # the cache: the pair that is right on the line we just left can be
             # exactly the one that breaks this one.
-            self._force_remeasure = True
-            self._retune.set()
-            handle = self._main_handle
-            if handle is not None:
-                try:
-                    if handle.is_open:
-                        handle.close()
-                except Exception:
-                    pass
+            self._request_reset()
+
+    def _request_reset(self):
+        """Ask the engine loop to re-pin DNS, re-measure and reopen its handles.
+
+        Closing the main handle is what unblocks the recv() in the packet loop;
+        the loop then falls back to the outer while and runs _apply_strategy.
+        """
+        self._force_remeasure = True
+        self._retune.set()
+        handle = self._main_handle
+        if handle is not None:
+            try:
+                if handle.is_open:
+                    handle.close()
+            except Exception:
+                pass
+
+    def _health_watch(self):
+        """Heal the engine when the bypass stops working while the line is up.
+
+        This does automatically what the user otherwise does by restarting the
+        app. It only acts on evidence: HEALTH_HOST must fail through the live
+        engine in HEALTH_FAILS_TO_HEAL consecutive rounds while an unblocked
+        control site still opens, so a real outage is left to the net watcher.
+        """
+        fails = 0
+        last_heal = 0.0
+        while not self._stop_event.wait(HEALTH_INTERVAL):
+            try:
+                # A refuser that failed open is reopened here, not left off.
+                if self._quic_drop is None:
+                    self._sync_quic_handle()
+                # Measuring / reopening right now, or this host is not one we
+                # bypass (selective mode without the Discord category).
+                if (self._main_handle is None or self._retune.is_set() or
+                        not should_bypass_fast(HEALTH_HOST, self._mode,
+                                               self._domain_set)):
+                    fails = 0
+                    continue
+                alive = self._bypass_alive()
+            except Exception:
+                continue
+            if alive is None:           # no internet at all — not ours to fix
+                fails = 0
+                continue
+            fails = 0 if alive else fails + 1
+            if fails < HEALTH_FAILS_TO_HEAL:
+                continue
+            if time.time() - last_heal < HEAL_COOLDOWN:
+                continue
+            fails = 0
+            last_heal = time.time()
+            self._log("[!] %s motor uzerinden acilmiyor — DNS ve strateji "
+                      "yenileniyor" % HEALTH_HOST)
+            self._request_reset()
+
+    def _bypass_alive(self):
+        """True if HEALTH_HOST handshakes through the engine, False if it does
+        not while the internet is up, None if the internet itself is down.
+
+        It resolves through the SYSTEM resolver, like the Discord app does, so a
+        lost DNS pin shows up here as well as a wrong strategy.
+        """
+        def system_ip(host):
+            try:
+                return socket.getaddrinfo(host, 443, socket.AF_INET,
+                                          socket.SOCK_STREAM)[0][4][0]
+            except Exception:
+                return None
+
+        ip = system_ip(HEALTH_HOST)
+        if ip and (autotune.tls_reachable(ip, HEALTH_HOST) or
+                   autotune.tls_reachable(ip, HEALTH_HOST)):
+            return True
+        for host in autotune.CONTROL_TARGETS:
+            cip = system_ip(host)
+            if cip and autotune.tls_reachable(cip, host):
+                return False
+        return None
 
     def _divert_loop(self, main_filter: str):
         """Open the main handle and process ClientHellos until stop or re-tune."""
@@ -486,10 +594,11 @@ class BypassEngine:
 
         except Exception as e:
             # A re-tune closes the handle under us on purpose; that is not an
-            # error worth showing, and it must not stop the engine.
+            # error worth showing. Anything else (e.g. the handle would not
+            # open) is logged and handed back to start(), which retries with
+            # backoff — raising here used to stop the engine for good.
             if not self._stop_event.is_set() and not self._retune.is_set():
                 self._log(f"[!] {e}")
-                raise
         finally:
             handle, self._main_handle = self._main_handle, None
             if handle is not None:

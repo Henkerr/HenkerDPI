@@ -7,6 +7,38 @@ each one publishes the SHA-256 of its assets.
 
 ---
 
+## 3.0.3 — 2026-09-25
+
+Protection now starts with Windows again, and a connection that goes bad heals
+itself instead of waiting for a restart.
+
+### Fixed
+- **"Start on boot" did nothing in 3.0.x.** The switch only saved the choice; no
+  logon task was ever registered. It now registers one, keeps it pointing at the
+  current exe on every launch, and carries over a task left by an older version.
+- **The logon task could stop the app or never start it.** Tasks made by older
+  versions used Windows' defaults: killed after 72 hours, not started when a
+  laptop boots on battery, and run at below-normal priority. The task is now
+  registered without a time limit, regardless of power source, at normal priority.
+- **Discord could drop and stay down until the app was restarted.** The engine
+  now checks every 90 seconds that Discord still opens through it. If it fails
+  twice in a row while the rest of the internet works, it re-pins secure DNS,
+  re-measures the line and reopens its handles — what a restart used to do.
+- **The engine could stop for good after a few errors.** A packet handle that
+  would not reopen ended the engine, and the error count never reset, so rare
+  glitches spread over days added up. It now retries with a back-off, and the
+  app restarts an engine that exits on its own.
+- **A stalled QUIC refuser could black-hole QUIC**, making Discord wait out a
+  timeout before falling back to TCP. It now fails open and is reopened.
+
+### Added
+- **An engine log** at `%LOCALAPPDATA%\HenkerDPI\engine.log`, so a connection
+  problem leaves a record that can be sent in.
+
+### Changed
+- Opening the app by hand always shows the window; only the logon task starts
+  it silently in the tray.
+
 ## 3.0.2 — 2026-09-03
 
 The Arcade game returns, updating becomes visible, and a stray warning is gone.
