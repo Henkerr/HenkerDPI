@@ -7,6 +7,12 @@ each one publishes the SHA-256 of its assets.
 
 ---
 
+## 3.0.5 — 2026-09-28
+
+Bug fix
+
+---
+
 ## 3.0.4 — 2026-09-28
 
 Bug fix

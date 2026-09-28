@@ -13,6 +13,7 @@
     const s = Object.assign({
       running: false, bypassed: 0, passed: 0, started: 0, mode: "all",
       dns: "cloudflare", dns_name: "Cloudflare", dns_ip: "1.1.1.1", dns_enabled: true, autostart: false, theme: "mevcut",
+      version: "önizleme",
     }, load());
     const NAME = { cloudflare: "Cloudflare", google: "Google", quad9: "Quad9" };
     const IP = { cloudflare: "1.1.1.1", google: "8.8.8.8", quad9: "9.9.9.9" };
@@ -44,6 +45,7 @@
       get_log(n) { return Promise.resolve(events.slice(-(n || 20)).reverse()); },
       get_update() { return Promise.resolve(null); },   // no update in browser preview
       apply_update() { return Promise.resolve(true); },
+      check_update() { return Promise.resolve({ status: "none", version: s.version }); },
     };
   })();
 
@@ -98,7 +100,12 @@
     .hdpi-pick{background:#0e1014;border:1px solid #24262b;border-radius:8px;padding:8px 11px;cursor:pointer;font-size:13px}
     .hdpi-sw{width:40px;height:23px;border-radius:99px;background:#2c2f37;position:relative;cursor:pointer;flex:none;transition:.15s}
     .hdpi-sw.on{background:#4d8bff}.hdpi-sw::after{content:"";position:absolute;top:3px;left:3px;width:17px;height:17px;border-radius:50%;background:#fff;transition:.15s}
-    .hdpi-sw.on::after{transform:translateX(17px)}`;
+    .hdpi-sw.on::after{transform:translateX(17px)}
+    #hdpiChk{min-width:76px;text-align:center}#hdpiChk:disabled{opacity:.6;cursor:default}
+    .hdpi-updmsg{font-size:12.5px;color:#9499a6;padding:2px 0 2px;display:none}
+    .hdpi-updmsg.show{display:block}.hdpi-updmsg.ok{color:#3ecf8e}.hdpi-updmsg.err{color:#f4739a}.hdpi-updmsg.new{color:#eceef2}
+    .hdpi-updbtn{margin-top:9px;display:inline-block;background:#4d8bff;color:#fff;border:none;border-radius:8px;padding:8px 14px;font-weight:700;font-size:12.5px;cursor:pointer}
+    .hdpi-updbtn:hover{background:#3d7bef}.hdpi-updbtn:disabled{opacity:.7;cursor:default}`;
     const st = document.createElement("style"); st.textContent = css; document.head.appendChild(st);
     const ov = document.createElement("div"); ov.className = "hdpi-ov";
     ov.innerHTML = '<div class="hdpi-sheet"><h3>Ayarlar <span class="x">✕</span></h3>'
@@ -108,7 +115,10 @@
       + '<div class="hdpi-row"><div class="t">DNS<small>Güvenli çözümleyici</small></div><div class="hdpi-pick" id="hdpiDns"></div></div>'
       + '<div class="hdpi-row"><div class="t">Güvenli DNS<small>Şifreli DNS</small></div><div class="hdpi-sw" id="hdpiSwDns"></div></div>'
       + '<div class="hdpi-grp">Sistem</div>'
-      + '<div class="hdpi-row"><div class="t">Açılışta başlat<small>Windows ile</small></div><div class="hdpi-sw" id="hdpiSwAuto"></div></div></div>';
+      + '<div class="hdpi-row"><div class="t">Açılışta başlat<small>Windows ile</small></div><div class="hdpi-sw" id="hdpiSwAuto"></div></div>'
+      + '<div class="hdpi-grp">Güncelleme</div>'
+      + '<div class="hdpi-row"><div class="t">Sürüm<small id="hdpiVer">—</small></div><div class="hdpi-pick" id="hdpiChk">Denetle</div></div>'
+      + '<div class="hdpi-updmsg" id="hdpiUpdMsg"></div></div>';
     document.body.appendChild(ov);
     ov.addEventListener("click", (e) => { if (e.target === ov || e.target.classList.contains("x")) ov.classList.remove("open"); });
     const th = ov.querySelector("#hdpiTh");
@@ -118,7 +128,32 @@
     ov.querySelector("#hdpiDns").addEventListener("click", async () => { const s = await getState(); const i = DNS.findIndex(d => d[0] === s.dns); await T().set_dns(DNS[(i + 1) % DNS.length][0]); syncPanel(); });
     ov.querySelector("#hdpiSwDns").addEventListener("click", async (e) => { e.currentTarget.classList.toggle("on"); await T().set_dns_enabled(e.currentTarget.classList.contains("on")); });
     ov.querySelector("#hdpiSwAuto").addEventListener("click", async (e) => { e.currentTarget.classList.toggle("on"); await T().set_autostart(e.currentTarget.classList.contains("on")); });
+    ov.querySelector("#hdpiChk").addEventListener("click", (e) => runUpdateCheck(e.currentTarget, ov.querySelector("#hdpiUpdMsg")));
     return ov;
+  }
+  // Manual "check for updates": forces a fresh GitHub check and shows the result
+  // right in the settings panel — a new version offers an install button, an
+  // up-to-date line says so, a failed reach says to check the connection.
+  async function runUpdateCheck(btn, msg) {
+    if (btn.dataset.busy) return;
+    btn.dataset.busy = "1"; btn.textContent = "Denetleniyor…";
+    msg.className = "hdpi-updmsg"; msg.textContent = "";
+    let r = null;
+    try { r = await Promise.resolve(T().check_update ? T().check_update() : null); } catch (e) {}
+    btn.textContent = "Denetle"; delete btn.dataset.busy;
+    if (!r || r.status === "error") { msg.className = "hdpi-updmsg show err"; msg.textContent = "Denetlenemedi — internet bağlantını kontrol et."; return; }
+    if (r.status === "none") { msg.className = "hdpi-updmsg show ok"; msg.textContent = "En son sürümü kullanıyorsun ✓"; return; }
+    // available
+    msg.className = "hdpi-updmsg show new";
+    msg.innerHTML = "Yeni sürüm <b>" + (r.version || "") + "</b> hazır.";
+    if (r.can_apply === false) {                 // source/macOS: can't swap in place
+      const open = document.createElement("button"); open.className = "hdpi-updbtn"; open.textContent = "Sürüm sayfasını aç";
+      open.addEventListener("click", () => { try { window.open(r.notes_url || "https://github.com/Henkerr/HenkerDPI/releases/latest", "_blank"); } catch (e) {} });
+      msg.appendChild(document.createElement("br")); msg.appendChild(open); return;
+    }
+    const go = document.createElement("button"); go.className = "hdpi-updbtn"; go.textContent = "Güncelle";
+    go.addEventListener("click", async () => { if (go.disabled) return; go.disabled = true; go.textContent = "İndiriliyor…"; try { await (T().apply_update ? T().apply_update() : null); } catch (e) {} });
+    msg.appendChild(document.createElement("br")); msg.appendChild(go);
   }
   async function syncPanel() {
     if (!panel) return; const s = await getState();
@@ -128,6 +163,7 @@
     panel.querySelector("#hdpiDns").textContent = s.dns_name || "Cloudflare";
     panel.querySelector("#hdpiSwDns").classList.toggle("on", !!s.dns_enabled);
     panel.querySelector("#hdpiSwAuto").classList.toggle("on", !!s.autostart);
+    const ver = panel.querySelector("#hdpiVer"); if (ver) ver.textContent = s.version || "—";
   }
   function openSettings() { if (!panel) panel = buildPanel(); syncPanel(); panel.classList.add("open"); }
 
@@ -267,5 +303,6 @@
     toggle: () => T().toggle(), setMode: (m) => T().set_mode(m), setDns: (d) => T().set_dns(d),
     setDnsEnabled: (b) => T().set_dns_enabled(b), setAutostart: (b) => T().set_autostart(b),
     getUpdate, applyUpdate,
+    checkUpdate: () => Promise.resolve(T().check_update ? T().check_update() : null),
   };
 })();

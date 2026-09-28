@@ -166,6 +166,7 @@ class Core:
             "dns_enabled": s.get("doh_enabled", True),
             "autostart": s.get("autostart", False),
             "theme": s.get("theme", "mevcut"),
+            "version": config.APP_VERSION,
         }
 
     def set_mode(self, m):        self.settings["mode"] = m; self._save()
@@ -205,6 +206,7 @@ def _dispatch(core, msg):
     if m == "set_theme":        core.set_theme(*a); return None
     if m == "get_log":          return core.get_log(*a)
     if m == "get_update":       return _update_dict(core)
+    if m == "check_update":     return _check_update_now(core)
     if m == "apply_update":     return _start_apply(core)
     if m == "show_ui":          show_ui(); return None
     if m == "ping":             return "pong"
@@ -383,6 +385,33 @@ def _update_dict(core):
         return None
     return {"version": info.version, "tag": info.tag,
             "notes_url": info.notes_url, "status": getattr(core, "_update_status", None)}
+
+
+def _check_update_now(core):
+    """Force an update check for the settings "check now" button.
+
+    Returns a small status dict the window can show directly:
+      {"status": "available", "version": X}  a newer release exists (and is now
+                                              stored on the core, so the banner
+                                              and apply_update pick it up too)
+      {"status": "none",      "version": X}  reached GitHub, already newest
+      {"status": "error"}                    could not reach GitHub at all
+    check_for_update returns None for BOTH "up to date" and "error", so
+    updater.last_check_failed() (set by its own mark_checked) tells them apart.
+    """
+    try:
+        info = updater.check_for_update(force=True)
+    except Exception:
+        info = None
+    if info:
+        core._update_info = info
+        core._update_status = None
+        return {"status": "available", "version": info.version,
+                "can_apply": updater.can_self_update(),
+                "notes_url": info.notes_url}
+    if updater.last_check_failed():
+        return {"status": "error"}
+    return {"status": "none", "version": config.APP_VERSION}
 
 
 def _start_apply(core):
