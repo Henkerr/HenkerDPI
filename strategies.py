@@ -168,6 +168,68 @@ def build_icmpv6_port_unreachable(pkt):
                            interface=pkt.interface, direction=Direction.INBOUND)
 
 
+def is_partial_hello(payload: bytes) -> bool:
+    """True if this segment opens a ClientHello record that continues in later
+    TCP segments, i.e. the record is longer than what this segment carries."""
+    if len(payload) < 6 or payload[0] != 0x16 or payload[5] != 0x01:
+        return False
+    return 5 + struct.unpack_from("!H", payload, 3)[0] > len(payload)
+
+
+def fragment_partial_hello(w, packet, cuts=(1,)) -> bool:
+    """Reshape the FIRST segment of a multi-segment ClientHello whose SNI is not
+    in it.
+
+    Chromium's post-quantum hello is ~1.8 KB with a random extension order, so
+    on a path with a 1400-byte MSS the hostname lands in the SECOND segment in
+    about half of all connections. The kernel filter only diverts the first
+    segment, so there is no hostname here to spoof; forwarded untouched, a DPI
+    that reassembles segments reads the hostname from the second one and
+    resets the connection (measured on a mobile carrier). What this segment
+    still allows is breaking the stream the DPI reassembles: cut it and send the
+    pieces last-to-first, the same out-of-order delivery the full bypass relies
+    on. No decoy — it would carry nothing to spoof. The server reassembles the
+    pieces normally.
+
+    Returns False (caller forwards the original) if the packet cannot be cut.
+    """
+    payload = bytes(packet.payload)
+    cuts = sorted(c for c in set(cuts) if 0 < c < len(payload))
+    if not cuts:
+        return False
+    orig_raw = bytes(packet.raw)
+    ver = orig_raw[0] >> 4
+    try:
+        _pstart = packet.protocol[1]
+    except Exception:
+        _pstart = None
+    if ver == 4:
+        l4_off = _pstart if _pstart else (orig_raw[0] & 0x0F) * 4
+    elif ver == 6:
+        l4_off = _pstart if _pstart else 40
+    else:
+        return False
+    try:
+        tcp_hlen = ((orig_raw[l4_off + 12] >> 4) & 0xF) * 4
+        headers = orig_raw[:l4_off + tcp_hlen]
+        seq = struct.unpack_from("!I", orig_raw, l4_off + 4)[0]
+        ack = struct.unpack_from("!I", orig_raw, l4_off + 8)[0]
+        bounds = [0] + cuts + [len(payload)]
+        frags = [_build_packet(headers, payload[a:b], l4_off, seq + a, ack,
+                               packet.interface, packet.direction, ver=ver)
+                 for a, b in zip(bounds, bounds[1:])]
+    except (IndexError, struct.error):
+        return False
+    # The original is already dropped by the caller; a send error here is left
+    # to TCP's retransmission, exactly as in tcp_fragment_and_send.
+    try:
+        for frag in reversed(frags):
+            w.send(frag)
+    except Exception:
+        pass
+    return True
+
+
 def tcp_fragment_and_send(w, packet, sni: str, verbose: bool = False,
                           decoy: str = "both", split: str = "record") -> bool:
     """

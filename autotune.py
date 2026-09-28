@@ -25,7 +25,8 @@ import time
 import pydivert
 
 from config import STATE_DIR
-from strategies import extract_sni, tcp_fragment_and_send
+from strategies import (extract_sni, tcp_fragment_and_send, is_partial_hello,
+                        fragment_partial_hello)
 
 CACHE_FILE = os.path.join(STATE_DIR, "autotune.json")
 
@@ -133,6 +134,36 @@ def network_signature() -> str:
     return "%s|%s|%s" % (ifindex, gw, _gateway_mac(gw) or "?")
 
 
+def has_ipv6_default() -> bool:
+    """Aktif hatta gercek (kuresel) bir IPv6 cikisi var mi.
+
+    Telefon hatti cift yiginli (kuresel IPv6 + IPv6 varsayilan rota); ev sabit
+    hatti yalniz IPv4. Windows IPv6'yi tercih ettigi icin cift yiginli engelli
+    siteler (Cloudflare arkasindakiler gibi) IPv6'dan cikip DPI'a takilir, oysa
+    motor yalniz IPv4'e dokunur. Bu, IPv6 bypass'ini yalnizca gercekten IPv6
+    cikisi olan hatta acmak icindir — yoksa hicbir sey degismez.
+
+    UDP connect paket gondermez; sadece cekirdegin bir kaynak adres + rota
+    secmesini saglar. Kaynak kuresel tekli yayin (2000::/3) ise gercek cikis var;
+    baglanti-yerel (fe80::) ya da ULA (fc00::/7) sayilmaz.
+    """
+    s = None
+    try:
+        s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+        s.connect(("2001:4860:4860::8888", 53))
+        src = s.getsockname()[0].split("%")[0]
+        packed = socket.inet_pton(socket.AF_INET6, src)
+        return (packed[0] & 0xE0) == 0x20            # 2000::/3 kuresel tekli yayin
+    except OSError:
+        return False
+    finally:
+        if s is not None:
+            try:
+                s.close()
+            except Exception:
+                pass
+
+
 # ------------------------------------------------------------------ onbellek
 def _load_cache() -> dict:
     try:
@@ -160,6 +191,19 @@ def cached_for(signature: str):
         return None
     ttl = CACHE_TTL if entry.get("ok") else CACHE_TTL_FAILED
     if time.time() - entry.get("ts", 0) > ttl:
+        return None
+    decoy, split = entry.get("decoy"), entry.get("split")
+    if isinstance(decoy, str) and isinstance(split, str):
+        return decoy, split
+    return None
+
+
+def _proven_for(signature: str):
+    """Bu ag icin gercekten olculmus (ok=True), suresi dolmamis (decoy, split)."""
+    entry = _load_cache().get(signature)
+    if not isinstance(entry, dict) or not entry.get("ok"):
+        return None
+    if time.time() - entry.get("ts", 0) > CACHE_TTL:
         return None
     decoy, split = entry.get("decoy"), entry.get("split")
     if isinstance(decoy, str) and isinstance(split, str):
@@ -257,7 +301,7 @@ def online() -> bool:
 
 
 # ------------------------------------------------------------------ TLS olcumu
-def _client_hello(host: str, size: int = 1700) -> bytes:
+def _client_hello(host: str, size: int = 1700, sni_last: bool = False) -> bytes:
     """Tarayicilarinkine yakin boyutta, gercek bir ClientHello uretir.
 
     Python'un ssl modulunun urettigi hello kucuk kalir; DPI davranisi paket
@@ -268,6 +312,13 @@ def _client_hello(host: str, size: int = 1700) -> bytes:
     donmez — o zaman 0x16 olcutu her stratejide basarisiz olur ve tuner hep yedege
     duser. key_share ile gercek bir ServerHello (0x16) doner, yani 0x16 = 'hello
     sunucuya ulasti (DPI asildi)', 0x15/RST = 'asilamadi ya da zehirlendi'.
+
+    sni_last=True, SNI'yi padding'in ARKASINA koyar: hello MSS'ten buyuk oldugu
+    icin SNI ikinci TCP paketine duser. Chromium uzanti sirasini her baglantida
+    karistirir ve post-quantum hello'su ~1.8 KB'tir; baglantilarin yaklasik
+    yarisinda SNI tam boyle ikinci pakette olur. SNI'yi hep basa koyan bir olcum
+    o yarida olup biteni hic goremez (telefon hattinda olculdu: SNI 1. pakette
+    acilan siteler, 2. pakette RST yiyordu).
     """
     host_b = host.encode("ascii")
     sni = (struct.pack("!HH", 0x0000, len(host_b) + 5) +
@@ -290,9 +341,9 @@ def _client_hello(host: str, size: int = 1700) -> bytes:
     keyshare_entry = struct.pack("!HH", 0x001d, 32) + os.urandom(32)
     keyshare = (struct.pack("!HH", 0x0033, len(keyshare_entry) + 2) +
                 struct.pack("!H", len(keyshare_entry)) + keyshare_entry)
-    exts = sni + versions + groups + ecpf + sigalgs + keyshare
+    exts = versions + groups + ecpf + sigalgs + keyshare
 
-    ciphers = (b"\x13\x01\x13\x02\x13\x03"      # TLS 1.3
+    ciphers =(b"\x13\x01\x13\x02\x13\x03"      # TLS 1.3
                b"\xc0\x2b\xc0\x2f\xc0\x2c\xc0\x30"
                b"\xcc\xa9\xcc\xa8\xc0\x13\xc0\x14"
                b"\x00\x9c\x00\x9d\x00\x2f\x00\x35")
@@ -302,17 +353,18 @@ def _client_hello(host: str, size: int = 1700) -> bytes:
             b"\x01\x00")                              # compression: null
 
     # Padding uzantisi (RFC 7685) ile hedef boyuta tamamla.
-    fixed = len(body) + 2 + len(exts) + 4 + 5      # +handshake basligi +kayit
+    fixed = len(body) + 2 + len(exts) + len(sni) + 4 + 5  # +handshake basligi +kayit
     pad = max(0, size - fixed - 4)
-    if pad:
-        exts += struct.pack("!HH", 0x0015, pad) + b"\x00" * pad
+    padding = struct.pack("!HH", 0x0015, pad) + b"\x00" * pad if pad else b""
+    exts = (exts + padding + sni) if sni_last else (sni + exts + padding)
 
     hs_body = body + struct.pack("!H", len(exts)) + exts
     hs = b"\x01" + struct.pack("!I", len(hs_body))[1:] + hs_body
     return b"\x16\x03\x01" + struct.pack("!H", len(hs)) + hs
 
 
-def tls_reachable(ip: str, host: str, timeout: float = PROBE_TIMEOUT) -> bool:
+def tls_reachable(ip: str, host: str, timeout: float = PROBE_TIMEOUT,
+                  sni_last: bool = False) -> bool:
     """Bu SNI ile bu IP'ye GERCEK bir TLS anlasmasi yurutulebiliyor mu?
 
     True: sunucu ServerHello (0x16 handshake kaydi) dondurdu — anlasma yuruyor.
@@ -330,7 +382,10 @@ def tls_reachable(ip: str, host: str, timeout: float = PROBE_TIMEOUT) -> bool:
     try:
         s = socket.create_connection((ip, 443), timeout)
         s.settimeout(timeout)
-        s.sendall(_client_hello(host))
+        # Chromium sets TCP_NODELAY; without it Nagle holds the hello's tail
+        # until the head is ACKed, a timing no browser produces.
+        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        s.sendall(_client_hello(host, sni_last=sni_last))
         data = s.recv(16)
         return len(data) >= 3 and data[0] == 0x16
     except Exception:
@@ -351,18 +406,24 @@ class _ProbeDiverter:
     olcum sirasinda kullanicinin geri kalan trafigine dokunmaz.
     """
 
-    def __init__(self, ip: str, decoy: str, split: str):
+    def __init__(self, ip: str, decoy: str, split: str, partial_cuts=None):
         self.ip = ip
         self.decoy = decoy
         self.split = split
+        # Set = also reshape the first segment of a hello whose SNI sits in a
+        # later segment (strategies.fragment_partial_hello), as the engine does.
+        self.partial_cuts = partial_cuts
         self.applied = 0
         self._w = None
         self._th = None
 
     def __enter__(self):
+        # WinDivert names the IPv6 field ipv6.DstAddr; ip.DstAddr only ever
+        # matches IPv4, so an IPv6 target needs its own clause.
+        field = "ipv6.DstAddr" if ":" in self.ip else "ip.DstAddr"
         flt = ("outbound and tcp and tcp.DstPort == 443 and "
                "tcp.PayloadLength > 5 and tcp.Payload[0] == 0x16 and "
-               "tcp.Payload[5] == 0x01 and ip.DstAddr == %s" % self.ip)
+               "tcp.Payload[5] == 0x01 and %s == %s" % (field, self.ip))
         self._w = pydivert.WinDivert(flt, priority=1500)
         self._w.open()
         self._th = threading.Thread(target=self._loop, daemon=True)
@@ -389,9 +450,14 @@ class _ProbeDiverter:
             except Exception:
                 return
             try:
-                sni = extract_sni(bytes(pkt.payload) if pkt.payload else b"")
+                payload = bytes(pkt.payload) if pkt.payload else b""
+                sni = extract_sni(payload)
                 if sni and tcp_fragment_and_send(w, pkt, sni, False,
                                                  self.decoy, self.split):
+                    self.applied += 1
+                    continue
+                if (not sni and self.partial_cuts and is_partial_hello(payload)
+                        and fragment_partial_hello(w, pkt, self.partial_cuts)):
                     self.applied += 1
                     continue
                 w.send(pkt)
@@ -580,6 +646,12 @@ def resolve_strategy(settings: dict, log=print, force: bool = False):
         if hit:
             return hit[0], hit[1], "onbellek"
 
+    # Bu agda daha once GERCEKTEN olculmus (ok) ve suresi dolmamis cift. Zorunlu
+    # bir yeniden olcum (ag degisimi / motorun kendini onarmasi) sonuc
+    # bulamazsa bunu korur: Discord kesintisi ya da anlik bir dalgalanma
+    # sirasindaki basarisiz olcum, kanitlanmis cifti yedekle ezmemeli.
+    proven = _proven_for(sig) if force else None
+
     log("[*] Hat taraniyor (ilk kurulum / yeni ag)...")
     t0 = time.time()
     decoy, split, status, target = choose(log)
@@ -589,6 +661,15 @@ def resolve_strategy(settings: dict, log=print, force: bool = False):
         # icin motor bunu kendiliginden tetikler.
         log("[*] Ag henuz hazir degil — varsayilan strateji ile baslaniyor")
         return decoy, split, "offline"
+
+    # Ama yalnizca bu cift hatta HALA normal siteleri bozmuyorsa: imza ayni kalip
+    # yol degisebilir (modem NAT'a gecti, saglamayi onarmaya basladi); o zaman
+    # eski kanitli cift her HTTPS'i bozar ve 7 gun boyunca korunmamali.
+    if (proven and status != "olculdu" and
+            _controls_ok(proven[0], proven[1], time.time() + 12.0)):
+        log("[*] Olcum sonuc vermedi (%s) — bu agda kanitlanmis %s / %s korunuyor"
+            % (status, proven[0], proven[1]))
+        return proven[0], proven[1], "olculdu"
 
     # Imzasi cikarilamayan ag (varsayilan rota yok) onbellege anahtar olamaz;
     # yanlis agin sonucunu baska aga uygulamaktansa her seferinde olcmek dogru.

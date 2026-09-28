@@ -7,6 +7,30 @@ each one publishes the SHA-256 of its assets.
 
 ---
 
+## 3.0.4 — 2026-09-28
+
+Banned sites now open on mobile data and USB tethering, not just Discord.
+
+### Fixed
+- **On a phone hotspot, most blocked sites failed while Discord worked.** A
+  mobile link carries less per packet than a home line, so a modern browser's
+  larger "hello" is split across two packets — and about half the time the site
+  name lands in the second one. The engine only ever saw the first packet, found
+  no name to protect there, and let it through untouched; the operator's DPI then
+  reassembled both packets, read the name, and reset the connection. It now
+  reshapes that first packet too, so the name never reaches the DPI in one piece.
+  This carries no decoy — only the connection's own real bytes are reordered, so
+  a site that was never blocked cannot be affected. (Discord kept working before
+  only because it retries aggressively.)
+- **Sites your PC reached over IPv6 stayed blocked.** On a dual-stack line
+  (common on mobile) Windows prefers IPv6, but the bypass only ever touched IPv4,
+  so a blocked site reached over IPv6 was left to the DPI. The engine now also
+  protects IPv6 connections — with a decoy-free reshape, measured to be safe —
+  and steers IPv6 QUIC to that path, but only on a line that actually has IPv6.
+  A home line without it is completely unchanged.
+
+---
+
 ## 3.0.3 — 2026-09-25
 
 Protection now starts with Windows again, and a connection that goes bad heals
@@ -14,26 +38,35 @@ itself instead of waiting for a restart.
 
 ### Fixed
 - **"Start on boot" did nothing in 3.0.x.** The switch only saved the choice; no
-  logon task was ever registered. It now registers one, keeps it pointing at the
-  current exe on every launch, and carries over a task left by an older version.
+  logon task was ever registered. It now registers one for your Windows account,
+  keeps it pointing at the current exe on every launch, and carries over a task
+  an older version left for you. On a PC with several Windows accounts each one
+  gets its own task, and one account never changes or removes another's.
 - **The logon task could stop the app or never start it.** Tasks made by older
   versions used Windows' defaults: killed after 72 hours, not started when a
   laptop boots on battery, and run at below-normal priority. The task is now
   registered without a time limit, regardless of power source, at normal priority.
 - **Discord could drop and stay down until the app was restarted.** The engine
   now checks every 90 seconds that Discord still opens through it. If it fails
-  twice in a row while the rest of the internet works, it re-pins secure DNS,
-  re-measures the line and reopens its handles — what a restart used to do.
+  twice in a row while the line is up, it does what a restart did: re-pins
+  secure DNS and reopens its handles. If Discord is still down at the next try,
+  it also re-measures the line. A try that did not help doubles the wait before
+  the next one (10 minutes up to 6 hours), so a network that blocks Discord for
+  good is not disturbed all day. A measurement that finds nothing never replaces
+  a strategy already proven on that network.
 - **The engine could stop for good after a few errors.** A packet handle that
   would not reopen ended the engine, and the error count never reset, so rare
   glitches spread over days added up. It now retries with a back-off, and the
-  app restarts an engine that exits on its own.
+  app restarts an engine that exits on its own, backing off and finally showing
+  it as off if it keeps failing to start (for example when the driver is
+  blocked).
 - **A stalled QUIC refuser could black-hole QUIC**, making Discord wait out a
   timeout before falling back to TCP. It now fails open and is reopened.
 
 ### Added
 - **An engine log** at `%LOCALAPPDATA%\HenkerDPI\engine.log`, so a connection
-  problem leaves a record that can be sent in.
+  problem leaves a record that can be sent in. It records the engine's own
+  events only, never the sites you open.
 
 ### Changed
 - Opening the app by hand always shows the window; only the logon task starts

@@ -12,6 +12,7 @@ import ctypes
 import pydivert
 from pydivert.consts import Flag, Param
 from strategies import (extract_sni, should_bypass_fast, tcp_fragment_and_send,
+                        is_partial_hello, fragment_partial_hello,
                         build_icmp_port_unreachable,
                         build_icmpv6_port_unreachable,
                         DECOY_MODES, SPLIT_MODES)
@@ -29,20 +30,29 @@ NET_WATCH_INTERVAL = 15.0
 
 # Health check of the running bypass. A user who sees Discord drop and come back
 # only after restarting the app is hitting a state the engine got into and never
-# left (a strategy measured during a network blip, a DNS pin lost on a re-pin, a
-# dead refuser thread). Every HEALTH_INTERVAL the engine opens a real handshake to
-# HEALTH_HOST through itself; two failed rounds in a row while the internet is
-# otherwise up trigger exactly what a restart does — re-pin DNS, re-measure,
-# reopen the handles. HEAL_COOLDOWN keeps a line that is genuinely down from
-# being re-measured over and over.
+# left (a DNS pin lost on a re-pin, a dead refuser thread, a strategy measured
+# during a network blip). Every HEALTH_INTERVAL the engine opens a real handshake
+# to HEALTH_HOST through itself. Two failed rounds in a row while the line is up
+# trigger a heal. The first heal does exactly what a restart does — re-pin DNS
+# and reopen the handles, strategy from the cache — so it costs no measurement
+# gap. Only if that did not help does the next heal also re-measure the line.
+#
+# A heal that did not help doubles the wait before the next one, up to
+# HEAL_COOLDOWN_MAX. On a line where Discord cannot open for reasons no heal
+# fixes (a school firewall, an IP block, a Discord outage) the engine must not
+# keep pausing the bypass and churning DNS all day.
 HEALTH_INTERVAL = 90.0
 HEALTH_FAILS_TO_HEAL = 2
 HEAL_COOLDOWN = 600.0
+HEAL_COOLDOWN_MAX = 6 * 3600.0
 HEALTH_HOST = "discord.com"
 
 # A divert loop that stayed up this long was healthy; its death is a fresh
 # incident, not the next strike of the same one.
 LOOP_HEALTHY_AFTER = 60.0
+# A main handle that has not opened once in this many tries is not a glitch
+# (the driver is blocked or missing): stop and let the app show the engine off.
+FIRST_OPEN_TRIES = 3
 
 
 def is_admin() -> bool:
@@ -62,7 +72,12 @@ class BypassEngine:
         self._rst_drop = None
         self._quic_drop = None
         self._quic_thread = None
+        # The QUIC handle is opened/closed from the engine, health and IPC
+        # threads; without this two of them could each open one and the
+        # untracked handle would outlive stop().
+        self._quic_lock = threading.RLock()
         self._main_handle = None
+        self._main_opened = False
         self._doh = None
         self._settings = load_settings()
         self._mode = MODE_ALL
@@ -71,12 +86,20 @@ class BypassEngine:
         # it has run. Kept separate from the settings values so a GUI mode
         # change (which reloads settings) cannot silently undo the measurement.
         self._tuned = None
+        # Whether the active line has a global IPv6 egress. When it does, the
+        # engine also bypasses IPv6 ClientHellos and refuses IPv6 QUIC, so a
+        # dual-stack banned site (which Windows reaches over its preferred IPv6)
+        # is handled instead of being left to the DPI. Recomputed on every
+        # (re)tune so moving to an IPv6-less line drops back to the IPv4 path.
+        self._ipv6_active = False
         self._retune = threading.Event()
         self._net_sig = None
         self._pending_measure = False
-        # Set by the network watcher on a real change/recovery. Tells the next
-        # _apply_strategy to re-pin DNS to the now-active adapter AND force a
-        # fresh measurement instead of trusting the per-network cache.
+        # Set by the network watcher on a real change/recovery, and by a heal.
+        # _reset_dns tells the next _apply_strategy to re-pin DNS to the active
+        # adapter and reopen the QUIC refuser; _force_remeasure additionally
+        # makes it measure instead of trusting the per-network cache.
+        self._reset_dns = False
         self._force_remeasure = False
         self._refresh_match_cache()
         self.stats = {"bypassed": 0, "passed": 0}
@@ -134,40 +157,48 @@ class BypassEngine:
         want = (self._settings.get("quic_drop_enabled", True) and
                 (self._mode == MODE_ALL or
                  not self._settings.get("quic_drop_all_mode_only", True)))
-        if want and self._quic_drop is None:
-            try:
-                # Match only long-header QUIC packets (Initial/Handshake — the
-                # Header Form bit is set, so the first byte is >= 0x80). 1-RTT
-                # data never appears once the Initial is refused, so the
-                # userspace refuser sees only a handful of packets. (WinDivert's
-                # filter language has no bitwise AND, hence the >= 0x80 form.)
-                h = pydivert.WinDivert(
-                    "outbound and udp and udp.DstPort == 443 and "
-                    "udp.PayloadLength > 0 and udp.Payload[0] >= 0x80",
-                    priority=999)
-                h.open()
-                self._quic_drop = h
-                self._quic_thread = threading.Thread(
-                    target=self._quic_refuse_loop, args=(h,), daemon=True)
-                self._quic_thread.start()
-            except Exception:
-                self._quic_drop = None
-                self._quic_thread = None
-        elif not want and self._quic_drop is not None:
+        with self._quic_lock:
+            # Never (re)open while the engine is stopping or stopped: _cleanup
+            # would have already closed the handle it knows about.
+            if (want and self._quic_drop is None and self.running and
+                    not self._stop_event.is_set()):
+                try:
+                    # Match only long-header QUIC packets (Initial/Handshake —
+                    # the Header Form bit is set, so the first byte is >= 0x80).
+                    # 1-RTT data never appears once the Initial is refused, so
+                    # the userspace refuser sees only a handful of packets.
+                    # (WinDivert's filter language has no bitwise AND, hence
+                    # the >= 0x80 form.)
+                    h = pydivert.WinDivert(
+                        "outbound and udp and udp.DstPort == 443 and "
+                        "udp.PayloadLength > 0 and udp.Payload[0] >= 0x80",
+                        priority=999)
+                    h.open()
+                    self._quic_drop = h
+                    self._quic_thread = threading.Thread(
+                        target=self._quic_refuse_loop, args=(h,), daemon=True)
+                    self._quic_thread.start()
+                except Exception:
+                    self._quic_drop = None
+                    self._quic_thread = None
+                return
+        if not want and self._quic_drop is not None:
             self._close_quic_handle()
 
     def _close_quic_handle(self):
         """Close the QUIC handle (unblocks recv → the refuser thread exits)."""
-        h = self._quic_drop
-        self._quic_drop = None
-        if h is not None:
-            try:
-                if h.is_open:
-                    h.close()
-            except Exception:
-                pass
-        th = self._quic_thread
-        self._quic_thread = None
+        with self._quic_lock:
+            h = self._quic_drop
+            self._quic_drop = None
+            if h is not None:
+                try:
+                    if h.is_open:
+                        h.close()
+                except Exception:
+                    pass
+            th = self._quic_thread
+            self._quic_thread = None
+        # Joined outside the lock: the exiting refuser takes it too.
         if th is not None and th is not threading.current_thread():
             th.join(timeout=2)
 
@@ -179,10 +210,12 @@ class BypassEngine:
         Non-IPv4/UDP packets are forwarded untouched; on any error we forward
         rather than black-hole.
         """
-        # IPv6 QUIC is only refused when the experimental IPv6 bypass is on;
-        # captured once so the default (IPv4-only) path stays byte-for-byte
-        # identical to before.
-        ipv6_on = self._settings.get("ipv6_bypass_enabled", False)
+        # IPv6 QUIC is refused only when the IPv6 bypass is active for this line
+        # (a global IPv6 egress, or the experimental flag). Refusing it forces
+        # HTTP/3-over-IPv6 down to IPv6 TCP, which is where the IPv6 TLS bypass
+        # acts; leaving it would let a dual-stack site ride unbypassed QUIC. On
+        # an IPv4-only line this stays False and the path is unchanged.
+        ipv6_on = self._ipv6_active
         seen = {}                       # dst addr -> last time we logged an engel
         LOG_TTL = 12.0                  # dedup window for the live-log entries
         while True:
@@ -194,12 +227,17 @@ class BypassEngine:
                 # diverting QUIC Initials into a queue nobody reads — the silent
                 # black-hole that makes Discord wait out a QUIC timeout. Fail
                 # open; the health check reopens it.
-                if self._quic_drop is handle and not self._stop_event.is_set():
-                    self._quic_drop = None
-                    try:
+                with self._quic_lock:
+                    died = self._quic_drop is handle
+                    if died:
+                        self._quic_drop = None
+                        self._quic_thread = None
+                try:
+                    if handle.is_open:
                         handle.close()
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
+                if died and not self._stop_event.is_set():
                     self._log("[!] QUIC yakalayici durdu — kapatildi, yeniden acilacak")
                 break
             try:
@@ -240,6 +278,12 @@ class BypassEngine:
     def start(self):
         """Run bypass loop. Call from a separate thread."""
         self._stop_event.clear()
+        # The watchers belong to THIS run. start() can return without stop()
+        # (the driver never opened) and be called again on the same object;
+        # a watcher still tied to _stop_event would then outlive its run, keep
+        # reopening handles on a stopped engine and double every heal.
+        run_over = threading.Event()
+        self._reset_dns = self._force_remeasure = False
         self.stats = {"bypassed": 0, "passed": 0}
         self.events.clear()
         self._settings = load_settings()
@@ -283,57 +327,50 @@ class BypassEngine:
             # ALL mode by default; in selective mode a system-wide UDP/443 kill
             # is pure collateral for the traffic we are not bypassing. Opened
             # here and kept in sync with runtime mode changes by reload_settings.
+            # Decide IPv6 first so the refuser opened here already knows whether
+            # to refuse IPv6 QUIC too (else it would take a retune to catch up).
+            self._recompute_ipv6()
             self._sync_quic_handle()
 
-            # Main filter — kernel-side ClientHello selection. Only TLS
-            # handshake ClientHello packets (record type 0x16, handshake type
-            # 0x01 at payload offset 5) are diverted to userspace; every other
-            # 443 packet stays in the kernel fast-path untouched. This is the
-            # key performance/reliability fix: the userspace loop now sees a
-            # handful of packets/sec instead of every outbound data packet, so
-            # it can no longer fall behind and force silent kernel drops.
-            # Locality clause. Default is the proven IPv4-only path. With the
-            # experimental IPv6 bypass enabled we ALSO divert IPv6 ClientHellos;
-            # the field is `ipv6.DstAddr` (NOT `ip6.DstAddr`, which the WinDivert
-            # compiler rejects with ERROR_INVALID_PARAMETER and would abort the
-            # handle open, killing engine start).
-            if self._settings.get("ipv6_bypass_enabled", False):
-                loc = ("((ip and ip.DstAddr != 127.0.0.1) or "
-                       "(ipv6 and ipv6.DstAddr != ::1))")
-            else:
-                loc = "ip.DstAddr != 127.0.0.1"
-            main_filter = (
-                "outbound and tcp and tcp.DstPort == 443 and "
-                "tcp.PayloadLength > 5 and "
-                "tcp.Payload[0] == 0x16 and tcp.Payload[5] == 0x01 and "
-                + loc
-            )
             # Measure the line before touching traffic, then keep watching for a
             # network change. The measurement is cached per network, so this is
             # a one-off cost the first time a given network is seen.
             self._net_sig = autotune.network_signature()
             self._retune.clear()
-            threading.Thread(target=self._net_watch, daemon=True).start()
-            threading.Thread(target=self._health_watch, daemon=True).start()
+            threading.Thread(target=self._net_watch, args=(run_over,),
+                             daemon=True).start()
+            threading.Thread(target=self._health_watch, args=(run_over,),
+                             daemon=True).start()
 
             restarts = 0
+            self._main_opened = False
             while not self._stop_event.is_set():
                 self._apply_strategy()
                 opened = time.time()
-                self._divert_loop(main_filter)
+                # The filter is rebuilt each iteration from the current line's
+                # IPv6 state (set by _apply_strategy): a retune onto a dual-stack
+                # line starts diverting IPv6 ClientHellos, and a move back to an
+                # IPv4-only line drops the IPv6 clause again.
+                self._divert_loop(self._build_main_filter())
                 if self._stop_event.is_set():
                     break
                 if self._retune.is_set():
                     restarts = 0        # deliberate re-open, not a failure
                     continue
-                # The handle died under us (or would not open). Never give up:
-                # an engine that stops here leaves the app looking "on" with no
+                restarts += 1
+                # A handle that never opened in this start is not a glitch: the
+                # driver is blocked or missing. Stop, so the app shows the engine
+                # off instead of "on" with no bypass.
+                if not self._main_opened and restarts >= FIRST_OPEN_TRIES:
+                    self._log("[!] Divert handle hic acilamadi — motor duruyor")
+                    break
+                # The handle died under us after working. Never give up: an
+                # engine that stops here leaves the app looking "on" with no
                 # bypass until the user restarts it. Back off instead, and treat
                 # a loop that ran for a while as healthy so strikes spread over
                 # days do not add up.
                 if time.time() - opened > LOOP_HEALTHY_AFTER:
-                    restarts = 0
-                restarts += 1
+                    restarts = 1
                 wait = min(30.0, 2.0 ** restarts)
                 self._log("[!] Divert handle kapandi — %.0f sn sonra yeniden aciliyor"
                           % wait)
@@ -343,9 +380,54 @@ class BypassEngine:
             if not self._stop_event.is_set():
                 self._log(f"[!] {e}")
         finally:
-            self._cleanup()
+            run_over.set()
+            # Not running from here on, so nothing reopens a handle that
+            # _cleanup is about to close.
             self.running = False
+            self._cleanup()
             self._log(f"{t('engine_stopped')} | Bypass: {self.stats['bypassed']}")
+
+    def _recompute_ipv6(self):
+        """Set _ipv6_active from the experimental flag OR a real IPv6 egress.
+
+        The explicit `ipv6_bypass_enabled` setting forces it on (support/debug).
+        Otherwise it follows the line: a global IPv6 default route means
+        dual-stack banned sites would be reached over IPv6, which the IPv4-only
+        path never touches, so the engine turns the IPv6 bypass on for that line.
+        """
+        try:
+            want = (self._settings.get("ipv6_bypass_enabled", False)
+                    or autotune.has_ipv6_default())
+        except Exception:
+            want = self._settings.get("ipv6_bypass_enabled", False)
+        if want != self._ipv6_active:
+            self._ipv6_active = want
+            self._log("[*] IPv6 bypass: %s" % ("ON" if want else "OFF"))
+
+    def _build_main_filter(self) -> str:
+        """Kernel-side ClientHello selection filter for the current line.
+
+        Only TLS handshake ClientHello packets (record type 0x16, handshake
+        type 0x01 at payload offset 5) are diverted to userspace; every other
+        443 packet stays in the kernel fast-path untouched — the performance fix
+        that keeps the userspace loop seeing a handful of packets/sec.
+
+        The IPv4-only clause is the long-proven path. On a line with IPv6 egress
+        we ALSO divert IPv6 ClientHellos; the field is `ipv6.DstAddr` (NOT
+        `ip6.DstAddr`, which the WinDivert compiler rejects with
+        ERROR_INVALID_PARAMETER, aborting the handle open and killing start()).
+        """
+        if self._ipv6_active:
+            loc = ("((ip and ip.DstAddr != 127.0.0.1) or "
+                   "(ipv6 and ipv6.DstAddr != ::1))")
+        else:
+            loc = "ip.DstAddr != 127.0.0.1"
+        return (
+            "outbound and tcp and tcp.DstPort == 443 and "
+            "tcp.PayloadLength > 5 and "
+            "tcp.Payload[0] == 0x16 and tcp.Payload[5] == 0x01 and "
+            + loc
+        )
 
     def _apply_strategy(self):
         """Pick the desync pair for the network we are on (measuring if needed).
@@ -360,13 +442,18 @@ class BypassEngine:
         the re-measure on retune; Windows now matches it.
         """
         force = self._force_remeasure
+        reset = self._reset_dns or force
         self._force_remeasure = False
+        self._reset_dns = False
+        # Decide IPv6 for the line we are on now, so the filter this iteration
+        # builds and the QUIC refuser this reset reopens both match it.
+        self._recompute_ipv6()
         # Consume the retune that brought us here BEFORE measuring. If the
         # network changes again mid-measurement the watcher re-arms both flags,
         # so the divert loop re-enters and re-measures instead of running the
         # strategy we just picked for the network we already left.
         self._retune.clear()
-        if force:
+        if reset:
             self._reapply_dns()
             # Reopen the QUIC refuser too, so a network change or a heal leaves
             # nothing from the old state behind — the same as a restart would.
@@ -419,13 +506,15 @@ class BypassEngine:
         except Exception as e:
             self._log(f"[!] DNS yeniden uygulanamadi ({e})")
 
-    def _net_watch(self):
+    def _net_watch(self, run_over):
         """Notice a network change and force a re-measure."""
-        while not self._stop_event.wait(NET_WATCH_INTERVAL):
+        while not run_over.wait(NET_WATCH_INTERVAL):
             try:
                 sig = autotune.network_signature()
             except Exception:
                 continue
+            if run_over.is_set():
+                break
             changed = sig != "unknown" and sig != self._net_sig
             # The network can come back without its fingerprint changing (link
             # was up, the line was not). Measure as soon as there is a way out.
@@ -439,18 +528,23 @@ class BypassEngine:
             else:
                 self._pending_measure = False
                 self._log("[*] Baglanti geldi — strateji olculuyor")
+            if run_over.is_set():       # online() outlived this run
+                break
             # Re-pin DNS to the new adapter and re-measure from scratch, not from
             # the cache: the pair that is right on the line we just left can be
             # exactly the one that breaks this one.
-            self._request_reset()
+            self._request_reset(remeasure=True)
 
-    def _request_reset(self):
-        """Ask the engine loop to re-pin DNS, re-measure and reopen its handles.
+    def _request_reset(self, remeasure: bool):
+        """Ask the engine loop to re-pin DNS and reopen its handles, and with
+        remeasure=True also to measure the line instead of using the cache.
 
         Closing the main handle is what unblocks the recv() in the packet loop;
         the loop then falls back to the outer while and runs _apply_strategy.
         """
-        self._force_remeasure = True
+        self._reset_dns = True
+        if remeasure:
+            self._force_remeasure = True
         self._retune.set()
         handle = self._main_handle
         if handle is not None:
@@ -460,17 +554,29 @@ class BypassEngine:
             except Exception:
                 pass
 
-    def _health_watch(self):
+    def _health_watch(self, run_over):
         """Heal the engine when the bypass stops working while the line is up.
 
         This does automatically what the user otherwise does by restarting the
         app. It only acts on evidence: HEALTH_HOST must fail through the live
-        engine in HEALTH_FAILS_TO_HEAL consecutive rounds while an unblocked
-        control site still opens, so a real outage is left to the net watcher.
+        engine in HEALTH_FAILS_TO_HEAL consecutive rounds while the line itself
+        is up, so a real outage is left to the net watcher.
+
+        Heals escalate. The first is a restart's worth (DNS + handles, strategy
+        from the cache). If Discord is still down at the next heal, that one
+        also re-measures the line. Every heal that did not bring Discord back
+        doubles the wait before the next, up to HEAL_COOLDOWN_MAX; one good
+        round, or a move to another network, resets all of it.
         """
         fails = 0
-        last_heal = 0.0
-        while not self._stop_event.wait(HEALTH_INTERVAL):
+        heals = 0                       # heals since Discord last opened
+        cooldown = HEAL_COOLDOWN
+        next_heal = 0.0
+        net = self._net_sig
+        while not run_over.wait(HEALTH_INTERVAL):
+            if self._net_sig != net:    # a new line gets a fresh, prompt first heal
+                net = self._net_sig
+                fails, heals, cooldown, next_heal = 0, 0, HEAL_COOLDOWN, 0.0
             try:
                 # A refuser that failed open is reopened here, not left off.
                 if self._quic_drop is None:
@@ -485,49 +591,59 @@ class BypassEngine:
                 alive = self._bypass_alive()
             except Exception:
                 continue
+            if run_over.is_set():       # the probe outlived its run
+                break
             if alive is None:           # no internet at all — not ours to fix
                 fails = 0
                 continue
-            fails = 0 if alive else fails + 1
-            if fails < HEALTH_FAILS_TO_HEAL:
+            if alive:
+                if heals:
+                    self._log("[*] %s yeniden aciliyor" % HEALTH_HOST)
+                fails, heals, cooldown, next_heal = 0, 0, HEAL_COOLDOWN, 0.0
                 continue
-            if time.time() - last_heal < HEAL_COOLDOWN:
+            fails += 1
+            if fails < HEALTH_FAILS_TO_HEAL or time.time() < next_heal:
                 continue
             fails = 0
-            last_heal = time.time()
-            self._log("[!] %s motor uzerinden acilmiyor — DNS ve strateji "
-                      "yenileniyor" % HEALTH_HOST)
-            self._request_reset()
+            if heals:                   # the last heal did not help
+                cooldown = min(cooldown * 2, HEAL_COOLDOWN_MAX)
+            heals += 1
+            next_heal = time.time() + cooldown
+            remeasure = heals > 1
+            self._log("[!] %s motor uzerinden acilmiyor — %s yenileniyor "
+                      "(sonraki deneme en erken %.0f dk sonra)"
+                      % (HEALTH_HOST,
+                         "DNS ve strateji" if remeasure else "DNS ve baglanti",
+                         cooldown / 60))
+            self._request_reset(remeasure=remeasure)
 
     def _bypass_alive(self):
         """True if HEALTH_HOST handshakes through the engine, False if it does
-        not while the internet is up, None if the internet itself is down.
+        not while the line is up, None if the line itself is down.
 
         It resolves through the SYSTEM resolver, like the Discord app does, so a
-        lost DNS pin shows up here as well as a wrong strategy.
+        lost DNS pin shows up here as well as a wrong strategy. Whether the line
+        is up is asked with a bare TCP connect (autotune.online), which carries
+        no ClientHello and so never passes through the engine's desync: an
+        engine state that breaks every HTTPS site must count as ours to heal,
+        not as "no internet".
         """
-        def system_ip(host):
-            try:
-                return socket.getaddrinfo(host, 443, socket.AF_INET,
-                                          socket.SOCK_STREAM)[0][4][0]
-            except Exception:
-                return None
-
-        ip = system_ip(HEALTH_HOST)
+        try:
+            ip = socket.getaddrinfo(HEALTH_HOST, 443, socket.AF_INET,
+                                    socket.SOCK_STREAM)[0][4][0]
+        except Exception:
+            ip = None
         if ip and (autotune.tls_reachable(ip, HEALTH_HOST) or
                    autotune.tls_reachable(ip, HEALTH_HOST)):
             return True
-        for host in autotune.CONTROL_TARGETS:
-            cip = system_ip(host)
-            if cip and autotune.tls_reachable(cip, host):
-                return False
-        return None
+        return False if autotune.online() else None
 
     def _divert_loop(self, main_filter: str):
         """Open the main handle and process ClientHellos until stop or re-tune."""
         try:
             self._main_handle = pydivert.WinDivert(main_filter)
             self._main_handle.open()
+            self._main_opened = True
             # Safety-net queue sizing for ClientHello bursts (a page opening
             # dozens of TLS connections at once). Wrapped so a value the driver
             # rejects can never crash start().
@@ -563,10 +679,21 @@ class BypassEngine:
                     if len(payload) > 5 and payload[0] == 0x16:
                         sni = extract_sni(payload)
                         if sni and should_bypass_fast(sni, self._mode, self._domain_set):
+                            # IPv6 uses a decoy-FREE record split, never the
+                            # IPv4-measured decoy. A decoy is only needed to
+                            # poison a DPI that reassembles; on IPv6 the record
+                            # split alone gets the SNI past (measured), and a
+                            # decoy-free reshape carries no fake packet, so it
+                            # cannot be "repaired" into a valid one and break
+                            # other sites. That keeps IPv6 safe on any line
+                            # without a separate IPv6 measurement.
+                            if (packet.raw[0] >> 4) == 6:
+                                decoy, split = "off", "record"
+                            else:
+                                decoy, split = self._decoy_mode, self._split_mode
                             if tcp_fragment_and_send(self._main_handle, packet, sni,
                                                      self._verbose,
-                                                     self._decoy_mode,
-                                                     self._split_mode):
+                                                     decoy, split):
                                 self.stats["bypassed"] += 1
                                 self.events.append((time.time(), sni, "bypass"))
                                 # In ALL mode, log every 50th bypass to reduce noise
@@ -578,6 +705,22 @@ class BypassEngine:
                                 continue
                         elif sni:
                             self.events.append((time.time(), sni, "pass"))
+                        elif sni is None and is_partial_hello(payload):
+                            # A ClientHello whose SNI fell into a LATER TCP
+                            # segment (Chromium's ~1.8 KB post-quantum hello on a
+                            # ~1400-byte MSS path lands the hostname in segment 2
+                            # about half the time). The kernel filter only hands
+                            # us this first segment; forwarded whole, a DPI that
+                            # reassembles reads the hostname from the next segment
+                            # and resets the flow (measured on a mobile carrier).
+                            # We cannot know the hostname to gate on, so this runs
+                            # in every mode — but it carries NO decoy and keeps the
+                            # original TTL, only reordering this segment's own real
+                            # bytes, so the server reassembles them and a
+                            # non-bypassed site cannot be harmed.
+                            if fragment_partial_hello(self._main_handle, packet):
+                                self.stats["bypassed"] += 1
+                                continue
 
                     self._main_handle.send(packet)
                     self.stats["passed"] += 1

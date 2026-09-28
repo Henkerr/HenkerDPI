@@ -77,6 +77,99 @@ check("NAT line fallback -> badseq/record",
       autotune._nat_safe_fallback(lambda *a: None) == autotune.SAFE_FALLBACK)
 autotune._controls_ok = _saved_ctrl
 
+# 3b) PARTIAL CLIENTHELLO — a hello whose SNI fell into a later TCP segment must
+#     be recognised (so the engine reshapes it instead of forwarding it clean)
+#     and reshaped without a decoy (only its own real bytes reordered, so it can
+#     never poison another site). This is the phone-line fix: on a ~1400-byte MSS
+#     path Chromium's ~1.8 KB hello puts the SNI in segment 2 about half the time.
+import strategies
+
+_first = autotune._client_hello("discord.com")                 # SNI in segment 1
+_late = autotune._client_hello("discord.com", sni_last=True)   # SNI in a later segment
+check("full hello (SNI early) is not seen as a partial hello",
+      not strategies.is_partial_hello(_first))
+check("SNI-last hello, truncated to one 1400B segment, IS a partial hello",
+      strategies.is_partial_hello(_late[:1400])
+      and autotune.extract_sni(_late[:1400]) is None,
+      "record spans the segment and no SNI is readable in it")
+
+
+class _CapW:
+    """Captures what fragment_partial_hello would send, without a real handle."""
+    def __init__(self):
+        self.sent = []
+
+    def send(self, pkt, **_):
+        self.sent.append(bytes(pkt.raw))
+
+
+import pydivert
+from pydivert.consts import Direction
+
+
+def _mk_packet(payload):
+    # Minimal outbound IPv4/TCP packet carrying `payload`, for the reshaper.
+    ihl, thl = 20, 20
+    ip = bytearray(ihl)
+    ip[0] = 0x45
+    ip[9] = 6                                       # TCP
+    ip[12:16] = bytes((10, 0, 0, 1))
+    ip[16:20] = bytes((93, 184, 216, 34))
+    struct = __import__("struct")
+    struct.pack_into("!H", ip, 2, ihl + thl + len(payload))
+    tcp = bytearray(thl)
+    struct.pack_into("!H", tcp, 0, 51000)           # src port
+    struct.pack_into("!H", tcp, 2, 443)             # dst port
+    struct.pack_into("!I", tcp, 4, 1000)            # seq
+    tcp[12] = (thl // 4) << 4
+    return pydivert.Packet(bytes(ip) + bytes(tcp) + payload,
+                           interface=(1, 0), direction=Direction.OUTBOUND)
+
+
+import struct as _struct
+
+_orig = bytes(_late[:1400])
+_w = _CapW()
+_ok = strategies.fragment_partial_hello(_w, _mk_packet(_orig))
+# Two segments out, sent tail-first, together carrying every original byte
+# exactly once, with no injected/decoy packet.
+check("partial hello is cut into 2 segments, no decoy added",
+      _ok and len(_w.sent) == 2, "sent %d packet(s)" % len(_w.sent))
+_seqs = [_struct.unpack_from("!I", p, 24)[0] for p in _w.sent]   # TCP seq @ IP20+4
+check("segments are sent tail-first (descending sequence numbers)",
+      _seqs == sorted(_seqs, reverse=True) and _seqs[0] != _seqs[1],
+      "seqs sent in order %r" % _seqs)
+# Reassemble by ascending seq and confirm the payload is byte-identical: the
+# server sees exactly the original hello, only its segments reordered on the wire.
+_by_seq = sorted(_w.sent, key=lambda p: _struct.unpack_from("!I", p, 24)[0])
+_reassembled = b"".join(p[40:] for p in _by_seq)                 # strip 20B IP + 20B TCP
+check("reordered segments reassemble to the exact original payload",
+      _reassembled == _orig, "len %d vs %d" % (len(_reassembled), len(_orig)))
+
+# 3c) IPv6 line detection is a boolean and never raises (drives the IPv6 bypass).
+_v6 = autotune.has_ipv6_default()
+check("has_ipv6_default() returns a bool", isinstance(_v6, bool), "got %r" % _v6)
+
+
+# 3d) ENGINE FILTER — the IPv6 clause appears only when the line has IPv6, and
+#     uses ipv6.DstAddr (the name WinDivert accepts), never ip6.DstAddr.
+import main as _mainmod
+
+
+class _FiltProbe:
+    _ipv6_active = False
+    _build_main_filter = _mainmod.BypassEngine._build_main_filter
+
+
+_fp = _FiltProbe()
+_f4 = _fp._build_main_filter()
+_fp._ipv6_active = True
+_f6 = _fp._build_main_filter()
+check("IPv4-only line filter has no IPv6 clause",
+      "ipv6" not in _f4 and "ip.DstAddr" in _f4)
+check("IPv6 line filter adds an ipv6.DstAddr clause (not ip6.DstAddr)",
+      "ipv6.DstAddr" in _f6 and "ip6.DstAddr" not in _f6)
+
 # 4) VERSION SYNC — config.APP_VERSION is what updater.py compares against the
 #    latest GitHub release tag, but the version ALSO lives in version_info.txt
 #    (the Windows file resource) and setup.iss. Keeping them in sync by hand

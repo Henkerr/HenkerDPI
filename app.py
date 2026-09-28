@@ -38,7 +38,18 @@ def engine_log(msg):
     The packaged app has no console, so without this every "[!]" the engine
     prints is lost — and a user whose connection "drops sometimes" has nothing
     to send. Rotates once at LOG_MAX_BYTES (keeps one old file).
+
+    "[BYPASS] <host>" lines are never written: on disk they would be a dated
+    list of the blocked sites the user opened, in the very file they are asked
+    to send for support. They are also the only per-packet lines, so leaving
+    them out keeps disk writes off the packet thread.
     """
+    try:
+        print(msg)
+    except Exception:
+        pass
+    if str(msg).startswith("[BYPASS]"):
+        return
     line = "%s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg)
     with _log_lock:
         try:
@@ -51,15 +62,17 @@ def engine_log(msg):
                 f.write(line)
         except OSError:
             pass
-    try:
-        print(msg)
-    except Exception:
-        pass
 
 
-# If the engine thread exits without the user stopping it, bring it back after
-# this long instead of sitting "off" until the app is restarted by hand.
+# If the engine thread exits without the user stopping it, bring it back instead
+# of sitting "off" until the app is restarted by hand. The delay doubles while
+# runs keep ending quickly (each start pins and restores DNS, so a tight loop
+# would flap the resolver), and after ENGINE_MAX_QUICK_FAILS short-lived runs in
+# a row the engine is left off so the window shows the real state.
 ENGINE_RESTART_DELAY = 5.0
+ENGINE_RESTART_MAX_DELAY = 300.0
+ENGINE_HEALTHY_RUN = 60.0
+ENGINE_MAX_QUICK_FAILS = 5
 
 
 class Core:
@@ -77,16 +90,26 @@ class Core:
         self._icon = None                 # tray icon, so an IPC apply_update can stop it
 
     def _run(self, gen, engine):
+        quick_fails = 0
         while self._gen == gen:
+            began = time.time()
             try:
                 engine.start()           # blocks until stop()
             except Exception as e:
                 engine_log("[!] engine: %s" % e)
             if self._gen != gen:
                 break
+            if time.time() - began >= ENGINE_HEALTHY_RUN:
+                quick_fails = 0
+            quick_fails += 1
+            if quick_fails > ENGINE_MAX_QUICK_FAILS:
+                engine_log("[!] Motor art arda baslayamadi — kapali birakildi")
+                break
+            delay = min(ENGINE_RESTART_DELAY * 2 ** (quick_fails - 1),
+                        ENGINE_RESTART_MAX_DELAY)
             engine_log("[!] Motor beklenmedik sekilde durdu — %.0f sn sonra "
-                       "yeniden baslatiliyor" % ENGINE_RESTART_DELAY)
-            self._wake.wait(ENGINE_RESTART_DELAY)
+                       "yeniden baslatiliyor" % delay)
+            self._wake.wait(delay)
             self._wake.clear()
         if self._gen == gen:
             self.running = False
@@ -96,7 +119,10 @@ class Core:
             return
         self._gen += 1
         self._wake.clear()                # a wake left by the last stop() must not cut the delay
-        self.engine = BypassEngine(log_callback=engine_log, verbose=False)
+        # Windows only: the macOS engine logs visited hosts in lines that do not
+        # carry the [BYPASS] prefix engine_log filters, so it keeps printing.
+        self.engine = BypassEngine(log_callback=engine_log if os.name == "nt" else None,
+                                   verbose=False)
         self.running = True
         self.started = time.time()
         self.thread = threading.Thread(target=self._run, args=(self._gen, self.engine),
@@ -457,60 +483,169 @@ def _task_action():
     return exe, '"%s" --autostart' % os.path.abspath(__file__)
 
 
-def _task_exists(name):
+def _current_user():
+    """(DOMAIN\\user, SID) of the account this process runs as."""
+    name = "%s\\%s" % (os.environ.get("USERDOMAIN", ""), os.environ.get("USERNAME", ""))
+    sid = ""
     try:
-        return subprocess.run(["schtasks", "/query", "/tn", name],
-                              capture_output=True, creationflags=_CF).returncode == 0
+        r = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"],
+                           capture_output=True, text=True, encoding="oem",
+                           errors="replace", creationflags=_CF)
+        parts = [p.strip().strip('"') for p in (r.stdout or "").strip().split('","')]
+        if len(parts) == 2:
+            name, sid = parts[0] or name, parts[1]
     except Exception:
+        pass
+    return name, sid
+
+
+def _task_owner(name):
+    """None if the task does not exist, "" if it names no user (an any-user
+    trigger from an old build), else the account names/SIDs it is bound to."""
+    try:
+        # Same codec as whoami in _current_user: both console tools write the
+        # OEM code page, so a non-ASCII account name compares equal. The SID
+        # (always ASCII) is the match that does not depend on it.
+        r = subprocess.run(["schtasks", "/query", "/tn", name, "/xml"],
+                           capture_output=True, text=True, encoding="oem",
+                           errors="replace", creationflags=_CF)
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    import re
+    return [u.strip().lower() for u in re.findall(r"<UserId>([^<]*)</UserId>", r.stdout or "")]
+
+
+def _task_is_mine(owner, me=None):
+    """The autostart choice is per user, so a task bound to another account on
+    the same PC is never adopted, overwritten or deleted.
+
+    A task that names a SID is decided on the SID alone: a bare or full account
+    name can match a different account (PC\\ali vs AzureAD\\ali). Without a SID
+    only the full DOMAIN\\user counts. A task naming no user at all (an any-user
+    trigger from an old build) is adoptable."""
+    if owner is None:
         return False
+    if not owner:
+        return True
+    name, sid = me or _current_user()
+    sids = [u for u in owner if u.startswith("s-1-")]
+    if sids and sid:
+        return sid.lower() in sids
+    full = name.lower()
+    return any(u == full for u in owner if not u.startswith("s-1-"))
+
+
+def _user_task_name(me):
+    """This account's own task name, used when TASK_NAME belongs to another
+    account on the same PC, so every account can have autostart. The full SID,
+    not just the RID: a local and a domain account can share a RID."""
+    import re
+    name, sid = me
+    tail = sid if sid else re.sub(r"[^A-Za-z0-9_.-]", "_", name.split("\\")[-1])
+    return "%s-%s" % (TASK_NAME, tail)
+
+
+def _task_names(me):
+    return (TASK_NAME, _user_task_name(me)) + LEGACY_TASKS
 
 
 def had_autostart_task():
-    """True if an older build left a logon task — its choice is carried over."""
-    return os.name == "nt" and any(_task_exists(n) for n in (TASK_NAME,) + LEGACY_TASKS)
-
-
-def sync_autostart_task(enabled):
-    """Make the logon task match `enabled`. Returns True on success.
-
-    Always rewritten when enabled, so a task left by an older build (wrong path,
-    72-hour limit, battery rule) is replaced by the current one. Legacy task
-    names are removed either way.
-    """
+    """True if an older build left a logon task for this user — its choice is
+    carried over."""
     if os.name != "nt":
         return False
-    for legacy in LEGACY_TASKS:
-        if _task_exists(legacy):
-            subprocess.run(["schtasks", "/delete", "/tn", legacy, "/f"],
-                           capture_output=True, creationflags=_CF)
-    if not enabled:
-        if _task_exists(TASK_NAME):
-            subprocess.run(["schtasks", "/delete", "/tn", TASK_NAME, "/f"],
-                           capture_output=True, creationflags=_CF)
-        return True
+    me = _current_user()
+    return any(_task_is_mine(_task_owner(n), me) for n in _task_names(me))
+
+
+def _delete_task(name):
+    subprocess.run(["schtasks", "/delete", "/tn", name, "/f"],
+                   capture_output=True, creationflags=_CF)
+
+
+def _register_task(name, me):
+    """Register the logon task `name` for this account. Returns True on success.
+
+    This runs elevated, so the XML must not pass through a file an unelevated
+    process could swap between the write and schtasks reading it (that would
+    register ITS task, elevated). It is written with a random, exclusively
+    created name into %SystemRoot%\\Temp: users may create files there but not
+    modify or delete another principal's, and the elevated file's owner is
+    Administrators. No PowerShell is involved, so no user-writable module path
+    is loaded into the elevated process either.
+    """
+    import tempfile
     from xml.sax.saxutils import escape
     command, arguments = _task_action()
-    user = "%s\\%s" % (os.environ.get("USERDOMAIN", ""), os.environ.get("USERNAME", ""))
+    # The SID when known: whoami's name is decoded through the OEM code page,
+    # so an account name outside it (Cyrillic on a Turkish system) would come
+    # back as "????" and fail to map. Task Scheduler takes a SID as UserId.
+    user = me[1] or "%s\\%s" % (os.environ.get("USERDOMAIN", ""),
+                                os.environ.get("USERNAME", ""))
     xml = _TASK_XML.format(user=escape(user), command=escape(command),
                            arguments=escape(arguments),
                            workdir=escape(os.path.dirname(command)))
-    path = os.path.join(config.STATE_DIR, "autostart_task.xml")
+    path = None
     try:
-        with open(path, "w", encoding="utf-16") as f:
+        # From the API, not the SystemRoot variable: the environment is not
+        # the elevated process's to trust for a security-relevant folder.
+        buf = ctypes.create_unicode_buffer(260)
+        n = ctypes.windll.kernel32.GetSystemWindowsDirectoryW(buf, 260)
+        windir = buf.value if 0 < n < 260 else r"C:\Windows"
+        fd, path = tempfile.mkstemp(prefix="henkerdpi-task-", suffix=".xml",
+                                    dir=os.path.join(windir, "Temp"))
+        with os.fdopen(fd, "w", encoding="utf-16") as f:
             f.write(xml)
-        r = subprocess.run(["schtasks", "/create", "/tn", TASK_NAME, "/xml", path, "/f"],
-                           capture_output=True, text=True, creationflags=_CF)
+        r = subprocess.run(["schtasks", "/create", "/tn", name, "/xml", path, "/f"],
+                           capture_output=True, text=True, encoding="oem",
+                           errors="replace", creationflags=_CF, timeout=60)
         if r.returncode != 0:
-            engine_log("[!] Acilis gorevi olusturulamadi: %s" % (r.stderr or r.stdout).strip())
+            engine_log("[!] Acilis gorevi olusturulamadi: %s"
+                       % (r.stderr or r.stdout).strip()[:300])
         return r.returncode == 0
     except Exception as e:
         engine_log("[!] Acilis gorevi olusturulamadi: %s" % e)
         return False
     finally:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
+        if path:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def sync_autostart_task(enabled):
+    """Make this user's logon task match `enabled`. Returns True on success.
+
+    Always rewritten when enabled, so a task left by an older build (wrong path,
+    72-hour limit, battery rule) is replaced by the current one. The shared name
+    TASK_NAME is used unless another account on this PC owns it, in which case
+    this account gets its own name. This user's other task names (legacy ones,
+    or the other of the two) are removed only after the new one is registered,
+    so a failed registration never costs a working autostart.
+    """
+    if os.name != "nt":
+        return False
+    me = _current_user()
+    owners = {n: _task_owner(n) for n in _task_names(me)}
+    mine = [n for n, o in owners.items() if _task_is_mine(o, me)]
+    if not enabled:
+        for n in mine:
+            _delete_task(n)
+        return True
+    shared = owners[TASK_NAME]
+    target = TASK_NAME if (shared is None or TASK_NAME in mine) else _user_task_name(me)
+    if owners.get(target) is not None and target not in mine:
+        engine_log("[!] Acilis gorevi adi baska bir hesaba ait — dokunulmadi")
+        return False
+    if not _register_task(target, me):
+        return False
+    for n in mine:
+        if n != target:
+            _delete_task(n)
+    return True
 
 
 def _sync_autostart_on_launch(core):

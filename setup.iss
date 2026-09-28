@@ -4,7 +4,7 @@
 [Setup]
 AppId={{A8F4E3B2-5D6C-4B9A-8E2F-3D7E9F1B4C6A}
 AppName=HenkerDPI
-AppVersion=3.0.3
+AppVersion=3.0.4
 AppPublisher=Henkerr
 AppPublisherURL=https://github.com/Henkerr
 DefaultDirName={autopf}\HenkerDPI
@@ -97,6 +97,9 @@ Filename: "taskkill"; Parameters: "/f /im HenkerDPI.exe"; Flags: runhidden; RunO
 Filename: "schtasks"; Parameters: "/delete /tn HenkerDPI /f"; Flags: runhidden; RunOnceId: "RemoveTask"
 ; Pre-rename logon task, for anyone upgrading from <= 2.3.0 and then removing.
 Filename: "schtasks"; Parameters: "/delete /tn HenkerDPI_V2 /f"; Flags: runhidden; RunOnceId: "RemoveLegacyTask"
+; Per-account tasks (HenkerDPI-<SID or name>) that 3.0.3+ registers when another account
+; on the PC owns the shared name.
+Filename: "powershell.exe"; Parameters: "-NoProfile -NonInteractive -Command ""Get-ScheduledTask -TaskPath '\' -TaskName 'HenkerDPI-*' -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false"""; Flags: runhidden; RunOnceId: "RemoveUserTasks"
 
 [Code]
 procedure KillRunningApp();
