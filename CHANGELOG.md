@@ -9,25 +9,7 @@ each one publishes the SHA-256 of its assets.
 
 ## 3.0.4 — 2026-09-28
 
-Banned sites now open on mobile data and USB tethering, not just Discord.
-
-### Fixed
-- **On a phone hotspot, most blocked sites failed while Discord worked.** A
-  mobile link carries less per packet than a home line, so a modern browser's
-  larger "hello" is split across two packets — and about half the time the site
-  name lands in the second one. The engine only ever saw the first packet, found
-  no name to protect there, and let it through untouched; the operator's DPI then
-  reassembled both packets, read the name, and reset the connection. It now
-  reshapes that first packet too, so the name never reaches the DPI in one piece.
-  This carries no decoy — only the connection's own real bytes are reordered, so
-  a site that was never blocked cannot be affected. (Discord kept working before
-  only because it retries aggressively.)
-- **Sites your PC reached over IPv6 stayed blocked.** On a dual-stack line
-  (common on mobile) Windows prefers IPv6, but the bypass only ever touched IPv4,
-  so a blocked site reached over IPv6 was left to the DPI. The engine now also
-  protects IPv6 connections — with a decoy-free reshape, measured to be safe —
-  and steers IPv6 QUIC to that path, but only on a line that actually has IPv6.
-  A home line without it is completely unchanged.
+Bug fix
 
 ---
 
